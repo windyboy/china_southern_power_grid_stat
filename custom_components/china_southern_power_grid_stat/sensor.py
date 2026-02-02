@@ -337,7 +337,10 @@ class CSGCoordinator(DataUpdateCoordinator):
     def __init__(self, hass: HomeAssistant, config_entry_id: str) -> None:
         """Initialize coordinator."""
         self._config_entry_id = config_entry_id
-        self._config = hass.config_entries.async_get_entry(self._config_entry_id).data
+        config_entry = hass.config_entries.async_get_entry(self._config_entry_id)
+        if config_entry is None:
+            raise ValueError(f"Config entry {self._config_entry_id} not found")
+        self._config = config_entry.data
         super().__init__(
             hass,
             _LOGGER,
@@ -952,6 +955,9 @@ class CSGCoordinator(DataUpdateCoordinator):
         This is the place to pre-process the data to lookup tables
         so entities can quickly look up their data.
         """
+        # Reset the event flag for this update cycle
+        self._this_month_update_completed_flag.clear()
+
         self.update_interval = timedelta(
             seconds=self._config[CONF_SETTINGS][CONF_UPDATE_INTERVAL]
         )
@@ -992,11 +998,18 @@ class CSGCoordinator(DataUpdateCoordinator):
             await self._async_update_account_data(account)
         if config_entry_need_update:
             new_config[CONF_UPDATED_AT] = str(int(time.time() * 1000))
-            self.hass.config_entries.async_update_entry(
-                self.hass.config_entries.async_get_entry(self._config_entry_id),
-                data=new_config,
-            )
-            _LOGGER.debug("Updated accounts with metering point number")
+            config_entry = self.hass.config_entries.async_get_entry(self._config_entry_id)
+            if config_entry is not None:
+                self.hass.config_entries.async_update_entry(
+                    config_entry,
+                    data=new_config,
+                )
+                _LOGGER.debug("Updated accounts with metering point number")
+            else:
+                _LOGGER.warning(
+                    "Config entry %s not found, skipping data update",
+                    self._config_entry_id,
+                )
         _LOGGER.debug("Coordinator update took %s seconds", time.time() - start_time)
         self.hass.data[DOMAIN][self._config_entry_id][
             DATA_KEY_LAST_UPDATE_DAY

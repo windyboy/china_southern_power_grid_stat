@@ -732,11 +732,27 @@ class CSGClient:
             current_ladder = int(resp_data["ladderEle"])
         else:
             current_ladder = None
-        # "2023-05-01 00:00:00.0"
+        # API 返回格式可能是 "2023-05-01 00:00:00.0" 或 "2023-05-01 00:00:00"
         if resp_data["ladderEleStartDate"] is not None:
-            current_ladder_start_date = datetime.datetime.strptime(
-                resp_data["ladderEleStartDate"], "%Y-%m-%d %H:%M:%S.%f"
-            )
+            date_str = resp_data["ladderEleStartDate"]
+            try:
+                # 先尝试带毫秒的格式
+                current_ladder_start_date = datetime.datetime.strptime(
+                    date_str, "%Y-%m-%d %H:%M:%S.%f"
+                )
+            except ValueError:
+                try:
+                    # 再尝试不带毫秒的格式
+                    current_ladder_start_date = datetime.datetime.strptime(
+                        date_str, "%Y-%m-%d %H:%M:%S"
+                    )
+                except ValueError as e:
+                    _LOGGER.warning(
+                        "Failed to parse ladder start date '%s': %s",
+                        date_str,
+                        e,
+                    )
+                    current_ladder_start_date = None
         else:
             current_ladder_start_date = None
         if resp_data["ladderEleSurplus"] is not None:
