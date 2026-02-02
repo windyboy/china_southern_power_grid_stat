@@ -6,7 +6,7 @@ import logging
 import time
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_USERNAME, Platform
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import entity_registry
@@ -47,6 +47,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data[DOMAIN][entry.entry_id] = {}
 
+    # Optional: remove legacy password from stored config if present
+    if CONF_PASSWORD in entry.data:
+        new_data = entry.data.copy()
+        new_data.pop(CONF_PASSWORD, None)
+        hass.config_entries.async_update_entry(entry, data=new_data)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
@@ -65,6 +71,9 @@ async def async_remove_config_entry_device(
     hass: HomeAssistant, config_entry: ConfigEntry, device_entry: DeviceEntry
 ) -> bool:
     """Remove device"""
+    if not device_entry.identifiers:
+        _LOGGER.warning("Cannot remove device with no identifiers: %s", device_entry)
+        return False
     _LOGGER.info(f"removing device {device_entry.name}")
     account_num = list(device_entry.identifiers)[0][1]
 
@@ -80,9 +89,11 @@ async def async_remove_config_entry_device(
     for entity_id in entities.values():
         entity_reg.async_remove(entity_id)
 
-    # update config entry
+    # update config entry (only if account was in config)
     new_data = config_entry.data.copy()
-    new_data[CONF_ELE_ACCOUNTS].pop(account_num)
+    if new_data[CONF_ELE_ACCOUNTS].pop(account_num, None) is None:
+        _LOGGER.debug("Account %s was not in config, skip update", account_num)
+        return True
     new_data[CONF_UPDATED_AT] = str(int(time.time() * 1000))
     hass.config_entries.async_update_entry(
         config_entry,

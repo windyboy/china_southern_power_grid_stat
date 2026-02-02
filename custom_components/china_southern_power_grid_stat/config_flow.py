@@ -19,6 +19,7 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import translation
 from requests import RequestException
 
 from .const import (
@@ -104,13 +105,18 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle SMS login step."""
         if user_input is None:
             # initial step, need phone number to send SMS code
+            trans = await translation.async_get_translations(
+                self.hass, DOMAIN, self.hass.config.language
+            )
+            msg_username = trans.get(
+                "config.step.sms_login.data.username_invalid", "请输入11位手机号"
+            )
             return self.async_show_form(
                 step_id=STEP_SMS_LOGIN,
                 data_schema=vol.Schema(
                     {
-                        # TODO hardcoded string, should be a reference to strings.json?
                         vol.Required(CONF_USERNAME): vol.All(
-                            str, vol.Length(min=11, max=11), msg="请输入11位手机号"
+                            str, vol.Length(min=11, max=11), msg=msg_username
                         )
                     }
                 ),
@@ -125,16 +131,25 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle SMS and password login step."""
         if user_input is None:
+            trans = await translation.async_get_translations(
+                self.hass, DOMAIN, self.hass.config.language
+            )
+            msg_username = trans.get(
+                "config.step.sms_pwd_login.data.username_invalid", "请输入11位手机号"
+            )
+            msg_password = trans.get(
+                "config.step.sms_pwd_login.data.password_invalid", "请输入8-16位登陆密码"
+            )
             return self.async_show_form(
                 step_id=STEP_SMS_PWD_LOGIN,
                 data_schema=vol.Schema(
                     {
                         vol.Required(CONF_USERNAME): vol.All(
-                            str, vol.Length(min=11, max=11), msg="请输入11位手机号"
+                            str, vol.Length(min=11, max=11), msg=msg_username
                         ),
                         vol.Required(CONF_PASSWORD): vol.All(
-                            str, vol.Length(min=8, max=16), msg="请输入8-16位登陆密码"
-                        ),  # as shown on CSG web login page
+                            str, vol.Length(min=8, max=16), msg=msg_password
+                        ),
                     }
                 ),
             )
@@ -147,10 +162,16 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle SMS code validation step, for both SMS and SMS+password login."""
+        trans = await translation.async_get_translations(
+            self.hass, DOMAIN, self.hass.config.language
+        )
+        msg_code = trans.get(
+            "config.step.validate_sms_code.data.code_invalid", "请输入6位短信验证码"
+        )
         schema = vol.Schema(
             {
                 vol.Required(CONF_SMS_CODE): vol.All(
-                    str, vol.Length(min=6, max=6), msg="请输入6位短信验证码"
+                    str, vol.Length(min=6, max=6), msg=msg_code
                 ),
             }
         )
@@ -171,6 +192,7 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected exception when sending sms code")
                 errors[CONF_GENERAL_ERROR] = ERROR_UNKNOWN
                 error_detail = str(ge)
+                _LOGGER.debug("SMS send error detail: %s", error_detail)
             else:
                 return self.async_show_form(
                     step_id=STEP_VALIDATE_SMS_CODE,
@@ -181,7 +203,6 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 step_id=STEP_VALIDATE_SMS_CODE,
                 data_schema=schema,
                 errors=errors,
-                description_placeholders={"error_detail": error_detail},
             )
 
         # sms code is present, validate with api
@@ -214,10 +235,12 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except InvalidCredentials as ice:
             errors[CONF_GENERAL_ERROR] = ERROR_INVALID_AUTH
             error_detail = str(ice)
+            _LOGGER.debug("Login validation error detail: %s", error_detail)
         except Exception as ge:
             _LOGGER.exception("Unexpected exception during login validation")
             errors[CONF_GENERAL_ERROR] = ERROR_UNKNOWN
             error_detail = str(ge)
+            _LOGGER.debug("Login validation error detail: %s", error_detail)
         else:
             return await self.create_or_update_config_entry(
                 auth_token, login_type, password, username
@@ -226,7 +249,6 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id=STEP_VALIDATE_SMS_CODE,
             data_schema=schema,
             errors=errors,
-            description_placeholders={"error_detail": error_detail},
         )
 
     async def async_step_csg_qr_login(
@@ -327,7 +349,6 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         If the account is already added (reauth), update the existing entry"""
         data = {
             CONF_USERNAME: username,
-            CONF_PASSWORD: password,
             CONF_LOGIN_TYPE: login_type,
             CONF_AUTH_TOKEN: auth_token,
             CONF_ELE_ACCOUNTS: {},

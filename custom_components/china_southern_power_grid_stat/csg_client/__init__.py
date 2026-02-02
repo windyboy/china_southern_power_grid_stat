@@ -215,6 +215,38 @@ class CSGClient:
         self.customer_number = None
 
     # begin internal utility functions
+    def _request_with_retry(
+        self,
+        path: str,
+        payload: dict | None,
+        with_auth: bool = True,
+        method: str = "POST",
+        custom_headers: dict | None = None,
+        base_path: str = BASE_PATH_APP,
+    ):
+        """Call _make_request with exponential backoff retry (2s, 4s, 8s), max 3 attempts."""
+        last_err = None
+        for attempt in range(3):
+            try:
+                return self._make_request(
+                    path, payload, with_auth, method, custom_headers, base_path
+                )
+            except (requests.RequestException, CSGHTTPError) as err:
+                last_err = err
+                if attempt < 2:
+                    delay = 2 ** (attempt + 1)
+                    _LOGGER.debug(
+                        "Request %s attempt %d failed: %s, retry in %ds",
+                        path,
+                        attempt + 1,
+                        err,
+                        delay,
+                    )
+                    time.sleep(delay)
+        if last_err is not None:
+            raise last_err
+        raise RuntimeError("Unexpected retry loop exit")
+
     def _make_request(
         self,
         path: str,
@@ -251,10 +283,23 @@ class CSGClient:
                 )
                 raise CSGHTTPError(response.status_code)
 
-            json_str = response.content.decode("utf-8", errors="ignore")
-            json_str = json_str[json_str.find("{") : json_str.rfind("}") + 1]
-            json_data = json.loads(json_str)
-            response_data = json_data
+            try:
+                response_data = response.json()
+            except (ValueError, TypeError) as err:
+                _LOGGER.debug("response.json() failed for %s: %s", path, err)
+                json_str = response.content.decode("utf-8", errors="ignore")
+                start = json_str.find("{")
+                end = json_str.rfind("}")
+                if start == -1 or end == -1 or end < start:
+                    raise ValueError(
+                        f"Response for {path} contains no valid JSON object"
+                    ) from err
+                json_str = json_str[start : end + 1]
+                response_data = json.loads(json_str)
+            if not isinstance(response_data, dict):
+                raise ValueError(
+                    f"Response for {path} is not a JSON object: {type(response_data)}"
+                )
             _LOGGER.debug(
                 "_make_request: %s, response: %s",
                 path,
@@ -268,20 +313,24 @@ class CSGClient:
 
     def _handle_unsuccessful_response(self, api_path: str, response_data: dict):
         """Handles sta=!RESP_STA_SUCCESS"""
+        if not isinstance(response_data, dict):
+            _LOGGER.warning(
+                "Invalid response_data type for %s: %s", api_path, type(response_data)
+            )
+            raise ValueError(
+                f"response_data must be a dict for {api_path}, got {type(response_data)}"
+            )
         _LOGGER.debug(
             "Account customer number: %s, unsuccessful response while calling %s: %s",
             self.customer_number,
             api_path,
             response_data,
         )
-
-        if response_data[JSON_KEY_STA] == RESP_STA_NO_LOGIN:
-            raise NotLoggedIn(
-                response_data[JSON_KEY_STA], response_data.get(JSON_KEY_MESSAGE)
-            )
-        raise CSGAPIError(
-            response_data[JSON_KEY_STA], response_data.get(JSON_KEY_MESSAGE)
-        )
+        sta = response_data.get(JSON_KEY_STA)
+        msg = response_data.get(JSON_KEY_MESSAGE)
+        if sta == RESP_STA_NO_LOGIN:
+            raise NotLoggedIn(sta, msg)
+        raise CSGAPIError(sta, msg)
 
     # end internal utility functions
 
@@ -297,7 +346,7 @@ class CSGClient:
             "vcType": VERIFICATION_CODE_TYPE_LOGIN,
             "msgType": SEND_MSG_TYPE_VERIFICATION_CODE,
         }
-        _, resp_data = self._make_request(path, payload, with_auth=False)
+        _, resp_data = self._request_with_retry(path, payload, with_auth=False)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return True
         self._handle_unsuccessful_response(path, resp_data)
@@ -317,7 +366,7 @@ class CSGClient:
             # NOTE: this spell error is intentional
             "lgoinId": login_id,
         }
-        _, resp_data = self._make_request(
+        _, resp_data = self._request_with_retry(
             path, payload, with_auth=False, base_path=BASE_PATH_WEB
         )
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
@@ -332,7 +381,7 @@ class CSGClient:
             # this one is the correct spelling
             "loginId": login_id,
         }
-        resp_header, resp_data = self._make_request(
+        resp_header, resp_data = self._request_with_retry(
             path, payload, with_auth=False, base_path=BASE_PATH_WEB
         )
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
@@ -352,7 +401,7 @@ class CSGClient:
             JSON_KEY_SMS_CODE: sms_code,
         }
         payload = {JSON_KEY_PARAM: encrypt_params(payload)}
-        resp_header, resp_data = self._make_request(
+        resp_header, resp_data = self._request_with_retry(
             path, payload, with_auth=False, custom_headers={"need-crypto": "true"}
         )
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
@@ -374,7 +423,7 @@ class CSGClient:
             "checkPwd": True,
         }
         payload = {JSON_KEY_PARAM: encrypt_params(payload)}
-        resp_header, resp_data = self._make_request(
+        resp_header, resp_data = self._request_with_retry(
             path, payload, with_auth=False, custom_headers={"need-crypto": "true"}
         )
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
@@ -389,7 +438,7 @@ class CSGClient:
         """Contains custNumber, used to verify login"""
         path = "user/queryAuthenticationResult"
         payload = None
-        _, resp_data = self._make_request(path, payload)
+        _, resp_data = self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
@@ -398,7 +447,7 @@ class CSGClient:
         """Get account info"""
         path = "user/getUserInfo"
         payload = None
-        _, resp_data = self._make_request(path, payload)
+        _, resp_data = self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
@@ -406,7 +455,7 @@ class CSGClient:
     def api_get_all_linked_electricity_accounts(self) -> list[dict[str, Any]]:
         """List all linked electricity accounts under this account"""
         path = "eleCustNumber/queryBindEleUsers"
-        _, resp_data = self._make_request(path, {})
+        _, resp_data = self._request_with_retry(path, {})
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             _LOGGER.debug(
                 "Total %d users under this account", len(resp_data[JSON_KEY_DATA])
@@ -429,7 +478,7 @@ class CSGClient:
         }
         # custom_headers = {"funid": "100t002"}
         custom_headers = {}
-        _, resp_data = self._make_request(path, payload, custom_headers=custom_headers)
+        _, resp_data = self._request_with_retry(path, payload, custom_headers=custom_headers)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
@@ -452,7 +501,7 @@ class CSGClient:
         }
         # custom_headers = {"funid": "100t002"}
         custom_headers = {}
-        _, resp_data = self._make_request(path, payload, custom_headers=custom_headers)
+        _, resp_data = self._request_with_retry(path, payload, custom_headers=custom_headers)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
@@ -479,7 +528,7 @@ class CSGClient:
         }
         # custom_headers = {"funid": "100t002"}  # TODO: what does this do? region?
         custom_headers = {}
-        _, resp_data = self._make_request(path, payload, custom_headers=custom_headers)
+        _, resp_data = self._request_with_retry(path, payload, custom_headers=custom_headers)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
@@ -500,7 +549,7 @@ class CSGClient:
             JSON_KEY_YEAR_MONTH: f"{year}{month:02d}",
             JSON_KEY_METERING_POINT_ID: metering_point_id,
         }
-        _, resp_data = self._make_request(path, payload)
+        _, resp_data = self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
@@ -523,7 +572,7 @@ class CSGClient:
             JSON_KEY_METERING_POINT_ID: metering_point_id,
             "deviceIdentif": metering_point_number,
         }
-        _, resp_data = self._make_request(path, payload)
+        _, resp_data = self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
@@ -532,7 +581,7 @@ class CSGClient:
         """Contains: balance and arrears"""
         path = "charge/queryUserAccountNumberSurplus"
         payload = {JSON_KEY_AREA_CODE: area_code, JSON_KEY_ELE_CUST_ID: ele_customer_id}
-        _, resp_data = self._make_request(path, payload)
+        _, resp_data = self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
@@ -550,7 +599,7 @@ class CSGClient:
             JSON_KEY_ELE_CUST_ID: ele_customer_id,
             JSON_KEY_METERING_POINT_ID: None,  # this is set to null in api
         }
-        _, resp_data = self._make_request(path, payload)
+        _, resp_data = self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
@@ -563,7 +612,7 @@ class CSGClient:
         """Contains: power consumption(kWh) of yesterday"""
         path = "charge/queryDayElectricByMPointYesterday"
         payload = {JSON_KEY_ELE_CUST_ID: ele_customer_id, JSON_KEY_AREA_CODE: area_code}
-        _, resp_data = self._make_request(path, payload)
+        _, resp_data = self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
@@ -578,7 +627,7 @@ class CSGClient:
             ],
             "type": _type,
         }
-        _, resp_data = self._make_request(path, payload)
+        _, resp_data = self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
@@ -587,7 +636,7 @@ class CSGClient:
         """logout"""
         path = "center/logout"
         payload = {JSON_KEY_LOGON_CHAN: logon_chan, JSON_KEY_CRED_TYPE: cred_type}
-        _, resp_data = self._make_request(path, payload)
+        _, resp_data = self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)

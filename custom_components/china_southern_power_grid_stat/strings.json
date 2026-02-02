@@ -16,7 +16,8 @@
         "title": "登录南方电网",
         "description": "使用手机号和短信验证码登录",
         "data": {
-          "username": "手机号"
+          "username": "手机号",
+          "username_invalid": "请输入11位手机号"
         }
       },
       "sms_pwd_login": {
@@ -24,14 +25,17 @@
         "description": "使用手机号、密码和短信验证码登录",
         "data": {
           "username": "手机号",
-          "password": "密码"
+          "username_invalid": "请输入11位手机号",
+          "password": "密码",
+          "password_invalid": "请输入8-16位登陆密码"
         }
       },
       "validate_sms_code": {
         "title": "输入短信验证码",
         "description": "验证码已发送到: {phone_no}",
         "data": {
-          "code": "短信验证码"
+          "code": "短信验证码",
+          "code_invalid": "请输入6位短信验证码"
         }
       },
       "qr_login": {
@@ -50,7 +54,7 @@
       "cannot_connect": "网络异常",
       "invalid_auth": "登录信息无效",
       "qr_not_scanned": "扫描二维码并确认登录",
-      "unknown": "未知错误: {error_detail}"
+      "unknown": "未知错误"
     },
     "abort": {
       "reauth_successful": "登录成功",

@@ -8,7 +8,7 @@
             "cannot_connect": "\u7f51\u7edc\u5f02\u5e38",
             "invalid_auth": "\u767b\u5f55\u4fe1\u606f\u65e0\u6548",
             "qr_not_scanned": "\u626b\u63cf\u4e8c\u7ef4\u7801\u5e76\u786e\u8ba4\u767b\u5f55",
-            "unknown": "\u672a\u77e5\u9519\u8bef: {error_detail}"
+            "unknown": "\u672a\u77e5\u9519\u8bef"
         },
         "step": {
             "qr_login": {
@@ -24,7 +24,8 @@
             },
             "sms_login": {
                 "data": {
-                    "username": "\u624b\u673a\u53f7"
+                    "username": "\u624b\u673a\u53f7",
+                    "username_invalid": "\u8bf7\u8f93\u516511\u4f4d\u624b\u673a\u53f7"
                 },
                 "description": "\u4f7f\u7528\u624b\u673a\u53f7\u548c\u77ed\u4fe1\u9a8c\u8bc1\u7801\u767b\u5f55",
                 "title": "\u767b\u5f55\u5357\u65b9\u7535\u7f51"
@@ -32,7 +33,9 @@
             "sms_pwd_login": {
                 "data": {
                     "password": "\u5bc6\u7801",
-                    "username": "\u624b\u673a\u53f7"
+                    "password_invalid": "\u8bf7\u8f93\u51658-16\u4f4d\u767b\u9646\u5bc6\u7801",
+                    "username": "\u624b\u673a\u53f7",
+                    "username_invalid": "\u8bf7\u8f93\u516511\u4f4d\u624b\u673a\u53f7"
                 },
                 "description": "\u4f7f\u7528\u624b\u673a\u53f7\u3001\u5bc6\u7801\u548c\u77ed\u4fe1\u9a8c\u8bc1\u7801\u767b\u5f55",
                 "title": "\u767b\u5f55\u5357\u65b9\u7535\u7f51"
@@ -50,7 +53,8 @@
             },
             "validate_sms_code": {
                 "data": {
-                    "code": "\u77ed\u4fe1\u9a8c\u8bc1\u7801"
+                    "code": "\u77ed\u4fe1\u9a8c\u8bc1\u7801",
+                    "code_invalid": "\u8bf7\u8f93\u51656\u4f4d\u77ed\u4fe1\u9a8c\u8bc1\u7801"
                 },
                 "description": "\u9a8c\u8bc1\u7801\u5df2\u53d1\u9001\u5230: {phone_no}",
                 "title": "\u8f93\u5165\u77ed\u4fe1\u9a8c\u8bc1\u7801"

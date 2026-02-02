@@ -218,6 +218,7 @@ class CSGBaseSensor(
         CoordinatorEntity.__init__(self, coordinator)
         self._coordinator = coordinator
         self._account_number = account_number
+        self._config_entry_id = getattr(coordinator, "_config_entry_id", None)
 
         self._entity_suffix = entity_suffix
         self._attr_extra_state_attributes = {}
@@ -225,6 +226,8 @@ class CSGBaseSensor(
 
     @property
     def unique_id(self) -> str | None:
+        if self._config_entry_id:
+            return f"{DOMAIN}.{self._config_entry_id}.{self._account_number}.{self._entity_suffix}"
         return f"{DOMAIN}.{self._account_number}.{self._entity_suffix}"
 
     @property
@@ -614,13 +617,13 @@ class CSGCoordinator(DataUpdateCoordinator):
 
         (success_usage, result_usage), (success_cost, result_cost) = results
 
-        if success_usage:
+        if success_usage and result_usage:
             this_month_kwh_from_usage, this_month_by_day_from_usage = result_usage
         else:
             this_month_kwh_from_usage = STATE_UNAVAILABLE
             this_month_by_day_from_usage = STATE_UNAVAILABLE
 
-        if success_cost:
+        if success_cost and result_cost:
             (
                 this_month_cost,
                 this_month_kwh_from_cost,
@@ -632,26 +635,20 @@ class CSGCoordinator(DataUpdateCoordinator):
                 this_month_cost = STATE_UNAVAILABLE
             if this_month_kwh_from_cost is None:
                 this_month_kwh_from_cost = STATE_UNAVAILABLE
-            ladder_stage = (
-                ladder[WF_ATTR_LADDER]
-                if ladder[WF_ATTR_LADDER] is not None
-                else STATE_UNAVAILABLE
-            )
-            ladder_remaining_kwh = (
-                ladder[WF_ATTR_LADDER_REMAINING_KWH]
-                if ladder[WF_ATTR_LADDER_REMAINING_KWH] is not None
-                else STATE_UNAVAILABLE
-            )
-            ladder_tariff = (
-                ladder[WF_ATTR_LADDER_TARIFF]
-                if ladder[WF_ATTR_LADDER_TARIFF] is not None
-                else STATE_UNAVAILABLE
-            )
-            ladder_start_date = (
-                ladder[WF_ATTR_LADDER_START_DATE]
-                if ladder[WF_ATTR_LADDER_START_DATE] is not None
-                else STATE_UNAVAILABLE
-            )
+            if ladder and isinstance(ladder, dict):
+                ladder_stage = ladder.get(WF_ATTR_LADDER) or STATE_UNAVAILABLE
+                ladder_remaining_kwh = (
+                    ladder.get(WF_ATTR_LADDER_REMAINING_KWH) or STATE_UNAVAILABLE
+                )
+                ladder_tariff = ladder.get(WF_ATTR_LADDER_TARIFF) or STATE_UNAVAILABLE
+                ladder_start_date = (
+                    ladder.get(WF_ATTR_LADDER_START_DATE) or STATE_UNAVAILABLE
+                )
+            else:
+                ladder_stage = STATE_UNAVAILABLE
+                ladder_remaining_kwh = STATE_UNAVAILABLE
+                ladder_tariff = STATE_UNAVAILABLE
+                ladder_start_date = STATE_UNAVAILABLE
         else:
             (
                 this_month_cost,
@@ -747,13 +744,13 @@ class CSGCoordinator(DataUpdateCoordinator):
 
         (success_usage, result_usage), (success_cost, result_cost) = results
 
-        if success_usage:
+        if success_usage and result_usage:
             last_month_kwh_from_usage, last_month_by_day_from_usage = result_usage
         else:
             last_month_kwh_from_usage = STATE_UNAVAILABLE
             last_month_by_day_from_usage = STATE_UNAVAILABLE
 
-        if success_cost:
+        if success_cost and result_cost:
             (
                 last_month_cost,
                 last_month_kwh_from_cost,
@@ -762,11 +759,13 @@ class CSGCoordinator(DataUpdateCoordinator):
             ) = result_cost
 
             # for last month, it's safe to calculate total kwh from cost
-            if not last_month_cost:
+            if not last_month_cost and isinstance(last_month_by_day_from_cost, list):
                 last_month_cost = sum(
                     d[WF_ATTR_CHARGE] for d in last_month_by_day_from_cost
                 )
-            if not last_month_kwh_from_cost:
+            if not last_month_kwh_from_cost and isinstance(
+                last_month_by_day_from_cost, list
+            ):
                 last_month_kwh_from_cost = sum(
                     d[WF_ATTR_KWH] for d in last_month_by_day_from_cost
                 )

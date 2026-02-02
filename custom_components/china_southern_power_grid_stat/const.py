@@ -90,5 +90,5 @@ SETTING_LAST_MONTH_UPDATE_DAY_THRESHOLD = 3
 SETTING_LAST_YEAR_UPDATE_DAY_THRESHOLD = 7
 
 
-# defaults
-DEFAULT_UPDATE_INTERVAL = timedelta(hours=4).seconds
+# defaults (unit: seconds)
+DEFAULT_UPDATE_INTERVAL = int(timedelta(hours=4).total_seconds())
