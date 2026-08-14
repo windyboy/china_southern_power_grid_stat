@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Implementations of CSG's Web API
-this library is synchronous - since the updates are not frequent (12h+)
-and each update only contains a few requests
+Asynchronous implementation of CSG's Web API.
 """
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 import logging
@@ -16,7 +15,7 @@ from copy import copy
 from hashlib import md5
 from typing import Any
 
-import requests
+import aiohttp
 from Crypto.Cipher import AES, PKCS1_v1_5
 from Crypto.PublicKey import RSA
 
@@ -47,6 +46,16 @@ class CSGHTTPError(CSGAPIError):
 
     def __str__(self) -> str:
         return f"<CSGHTTPError code={self.status_code}>"
+
+
+class CSGTransportError(CSGAPIError):
+    """Network transport failure before a valid CSG response was received."""
+
+    def __init__(self, msg: str) -> None:
+        super().__init__(sta="TRANSPORT", msg=msg)
+
+    def __str__(self) -> str:
+        return f"<CSGTransportError message={self.msg}>"
 
 
 class InvalidCredentials(CSGAPIError):
@@ -192,9 +201,16 @@ class CSGClient:
 
     def __init__(
         self,
+        session: aiohttp.ClientSession,
         auth_token: str | None = None,
     ) -> None:
-        self._session: requests.Session = requests.Session()
+        self._session = session
+        self._timeout = aiohttp.ClientTimeout(
+            total=40,
+            connect=5,
+            sock_connect=5,
+            sock_read=30,
+        )
         self._common_headers = {
             "Host": "95598.csg.cn",
             "Content-Type": "application/json;charset=utf-8",
@@ -215,7 +231,7 @@ class CSGClient:
         self.customer_number = None
 
     # begin internal utility functions
-    def _request_with_retry(
+    async def _request_with_retry(
         self,
         path: str,
         payload: dict | None,
@@ -224,30 +240,28 @@ class CSGClient:
         custom_headers: dict | None = None,
         base_path: str = BASE_PATH_APP,
     ):
-        """Call _make_request with exponential backoff retry (2s, 4s, 8s), max 3 attempts."""
-        last_err = None
-        for attempt in range(3):
+        """Call _make_request, retrying one connection-establishment failure."""
+        for attempt in range(2):
             try:
-                return self._make_request(
+                return await self._make_request(
                     path, payload, with_auth, method, custom_headers, base_path
                 )
-            except (requests.RequestException, CSGHTTPError) as err:
-                last_err = err
-                if attempt < 2:
-                    delay = 2 ** (attempt + 1)
-                    _LOGGER.debug(
-                        "Request %s attempt %d failed: %s, retry in %ds",
-                        path,
-                        attempt + 1,
-                        err,
-                        delay,
-                    )
-                    time.sleep(delay)
-        if last_err is not None:
-            raise last_err
+            except aiohttp.ClientConnectorError as err:
+                if attempt == 1:
+                    raise CSGTransportError(str(err)) from err
+                _LOGGER.debug(
+                    "Request %s connection failed: %s, retry in 2s",
+                    path,
+                    err,
+                )
+                await asyncio.sleep(2)
+            except asyncio.TimeoutError as err:
+                raise CSGTransportError(str(err)) from err
+            except aiohttp.ClientError as err:
+                raise CSGTransportError(str(err)) from err
         raise RuntimeError("Unexpected retry loop exit")
 
-    def _make_request(
+    async def _make_request(
         self,
         path: str,
         payload: dict | None,
@@ -274,40 +288,47 @@ class CSGClient:
                 headers[_k] = _v
         if with_auth:
             headers[HEADER_X_AUTH_TOKEN] = self.auth_token
-            headers[HEADER_CUST_NUMBER] = self.customer_number
+            headers[HEADER_CUST_NUMBER] = self.customer_number or ""
         if method == "POST":
-            response = self._session.post(url, json=payload, headers=headers)
-            if response.status_code != 200:
-                _LOGGER.error(
-                    "API call %s returned status code %d", path, response.status_code
-                )
-                raise CSGHTTPError(response.status_code)
+            async with self._session.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=self._timeout,
+            ) as response:
+                if response.status != 200:
+                    _LOGGER.error(
+                        "API call %s returned status code %d", path, response.status
+                    )
+                    raise CSGHTTPError(response.status)
 
-            try:
-                response_data = response.json()
-            except (ValueError, TypeError) as err:
-                _LOGGER.debug("response.json() failed for %s: %s", path, err)
-                json_str = response.content.decode("utf-8", errors="ignore")
-                start = json_str.find("{")
-                end = json_str.rfind("}")
-                if start == -1 or end == -1 or end < start:
+                try:
+                    response_data = await response.json(content_type=None)
+                except (ValueError, TypeError) as err:
+                    _LOGGER.debug("response.json() failed for %s: %s", path, err)
+                    json_str = (await response.read()).decode(
+                        "utf-8", errors="ignore"
+                    )
+                    start = json_str.find("{")
+                    end = json_str.rfind("}")
+                    if start == -1 or end == -1 or end < start:
+                        raise ValueError(
+                            f"Response for {path} contains no valid JSON object"
+                        ) from err
+                    json_str = json_str[start : end + 1]
+                    response_data = json.loads(json_str)
+                if not isinstance(response_data, dict):
                     raise ValueError(
-                        f"Response for {path} contains no valid JSON object"
-                    ) from err
-                json_str = json_str[start : end + 1]
-                response_data = json.loads(json_str)
-            if not isinstance(response_data, dict):
-                raise ValueError(
-                    f"Response for {path} is not a JSON object: {type(response_data)}"
+                        f"Response for {path} is not a JSON object: {type(response_data)}"
+                    )
+                _LOGGER.debug(
+                    "_make_request: %s, response: %s",
+                    path,
+                    json.dumps(response_data, ensure_ascii=False),
                 )
-            _LOGGER.debug(
-                "_make_request: %s, response: %s",
-                path,
-                json.dumps(response_data, ensure_ascii=False),
-            )
 
-            # headers need to be returned since they may contain additional data
-            return response.headers, response_data
+                # headers need to be returned since they may contain additional data
+                return response.headers, response_data
 
         raise NotImplementedError()
 
@@ -335,7 +356,7 @@ class CSGClient:
     # end internal utility functions
 
     # begin raw api functions
-    def api_send_login_sms(self, phone_no: str):
+    async def api_send_login_sms(self, phone_no: str):
         """Send SMS verification code to phone_no
         Note this is not the function for login with SMS, it only requests to send the code
         """
@@ -346,12 +367,12 @@ class CSGClient:
             "vcType": VERIFICATION_CODE_TYPE_LOGIN,
             "msgType": SEND_MSG_TYPE_VERIFICATION_CODE,
         }
-        _, resp_data = self._request_with_retry(path, payload, with_auth=False)
+        _, resp_data = await self._request_with_retry(path, payload, with_auth=False)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return True
         self._handle_unsuccessful_response(path, resp_data)
 
-    def api_create_login_qr_code(
+    async def api_create_login_qr_code(
         self, channel: QRCodeType, login_id: str | None = None
     ) -> (str, str):
         """Request API to create a QR code for login
@@ -366,14 +387,14 @@ class CSGClient:
             # NOTE: this spell error is intentional
             "lgoinId": login_id,
         }
-        _, resp_data = self._request_with_retry(
+        _, resp_data = await self._request_with_retry(
             path, payload, with_auth=False, base_path=BASE_PATH_WEB
         )
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return login_id, resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
 
-    def api_get_qr_login_status(self, login_id: str) -> (bool, str):
+    async def api_get_qr_login_status(self, login_id: str) -> tuple[bool, str]:
         """Get login status of the QR code"""
         path = "center/getLoginInfo"
         payload = {
@@ -381,7 +402,7 @@ class CSGClient:
             # this one is the correct spelling
             "loginId": login_id,
         }
-        resp_header, resp_data = self._request_with_retry(
+        resp_header, resp_data = await self._request_with_retry(
             path, payload, with_auth=False, base_path=BASE_PATH_WEB
         )
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
@@ -390,7 +411,7 @@ class CSGClient:
             return False, ""
         self._handle_unsuccessful_response(path, resp_data)
 
-    def api_login_with_sms_code(self, phone_no: str, sms_code: str):
+    async def api_login_with_sms_code(self, phone_no: str, sms_code: str):
         """Login with phone number and SMS code"""
         path = "center/login"
         payload = {
@@ -401,14 +422,14 @@ class CSGClient:
             JSON_KEY_SMS_CODE: sms_code,
         }
         payload = {JSON_KEY_PARAM: encrypt_params(payload)}
-        resp_header, resp_data = self._request_with_retry(
+        resp_header, resp_data = await self._request_with_retry(
             path, payload, with_auth=False, custom_headers={"need-crypto": "true"}
         )
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_header[HEADER_X_AUTH_TOKEN]
         self._handle_unsuccessful_response(path, resp_data)
 
-    def api_login_with_password_and_sms_code(
+    async def api_login_with_password_and_sms_code(
         self, phone_no: str, password: str, sms_code: str
     ):
         """Login with phone number, SMS code and password"""
@@ -423,7 +444,7 @@ class CSGClient:
             "checkPwd": True,
         }
         payload = {JSON_KEY_PARAM: encrypt_params(payload)}
-        resp_header, resp_data = self._request_with_retry(
+        resp_header, resp_data = await self._request_with_retry(
             path, payload, with_auth=False, custom_headers={"need-crypto": "true"}
         )
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
@@ -434,28 +455,30 @@ class CSGClient:
             )
         self._handle_unsuccessful_response(path, resp_data)
 
-    def api_query_authentication_result(self) -> dict[str, Any]:
+    async def api_query_authentication_result(self) -> dict[str, Any]:
         """Contains custNumber, used to verify login"""
         path = "user/queryAuthenticationResult"
         payload = None
-        _, resp_data = self._request_with_retry(path, payload)
+        _, resp_data = await self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
 
-    def api_get_user_info(self) -> dict[str, Any]:
+    async def api_get_user_info(self) -> dict[str, Any]:
         """Get account info"""
         path = "user/getUserInfo"
         payload = None
-        _, resp_data = self._request_with_retry(path, payload)
+        _, resp_data = await self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
 
-    def api_get_all_linked_electricity_accounts(self) -> list[dict[str, Any]]:
+    async def api_get_all_linked_electricity_accounts(
+        self,
+    ) -> list[dict[str, Any]]:
         """List all linked electricity accounts under this account"""
         path = "eleCustNumber/queryBindEleUsers"
-        _, resp_data = self._request_with_retry(path, {})
+        _, resp_data = await self._request_with_retry(path, {})
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             _LOGGER.debug(
                 "Total %d users under this account", len(resp_data[JSON_KEY_DATA])
@@ -463,7 +486,7 @@ class CSGClient:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
 
-    def api_get_metering_point(
+    async def api_get_metering_point(
         self,
         area_code: str,
         ele_customer_id: str,
@@ -478,12 +501,14 @@ class CSGClient:
         }
         # custom_headers = {"funid": "100t002"}
         custom_headers = {}
-        _, resp_data = self._request_with_retry(path, payload, custom_headers=custom_headers)
+        _, resp_data = await self._request_with_retry(
+            path, payload, custom_headers=custom_headers
+        )
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
 
-    def api_query_day_electric_by_m_point(
+    async def api_query_day_electric_by_m_point(
         self,
         year: int,
         month: int,
@@ -501,12 +526,14 @@ class CSGClient:
         }
         # custom_headers = {"funid": "100t002"}
         custom_headers = {}
-        _, resp_data = self._request_with_retry(path, payload, custom_headers=custom_headers)
+        _, resp_data = await self._request_with_retry(
+            path, payload, custom_headers=custom_headers
+        )
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
 
-    def api_query_day_electric_charge_by_m_point(
+    async def api_query_day_electric_charge_by_m_point(
         self,
         year: int,
         month: int,
@@ -528,12 +555,14 @@ class CSGClient:
         }
         # custom_headers = {"funid": "100t002"}  # TODO: what does this do? region?
         custom_headers = {}
-        _, resp_data = self._request_with_retry(path, payload, custom_headers=custom_headers)
+        _, resp_data = await self._request_with_retry(
+            path, payload, custom_headers=custom_headers
+        )
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
 
-    def api_query_day_electric_and_temperature(
+    async def api_query_day_electric_and_temperature(
         self,
         year: int,
         month: int,
@@ -549,12 +578,12 @@ class CSGClient:
             JSON_KEY_YEAR_MONTH: f"{year}{month:02d}",
             JSON_KEY_METERING_POINT_ID: metering_point_id,
         }
-        _, resp_data = self._request_with_retry(path, payload)
+        _, resp_data = await self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
 
-    def api_query_electricity_calender(
+    async def api_query_electricity_calender(
         self,
         year: int,
         month: int,
@@ -572,21 +601,23 @@ class CSGClient:
             JSON_KEY_METERING_POINT_ID: metering_point_id,
             "deviceIdentif": metering_point_number,
         }
-        _, resp_data = self._request_with_retry(path, payload)
+        _, resp_data = await self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
 
-    def api_query_account_surplus(self, area_code: str, ele_customer_id: str):
+    async def api_query_account_surplus(
+        self, area_code: str, ele_customer_id: str
+    ):
         """Contains: balance and arrears"""
         path = "charge/queryUserAccountNumberSurplus"
         payload = {JSON_KEY_AREA_CODE: area_code, JSON_KEY_ELE_CUST_ID: ele_customer_id}
-        _, resp_data = self._request_with_retry(path, payload)
+        _, resp_data = await self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
 
-    def api_get_fee_analyze_details(
+    async def api_get_fee_analyze_details(
         self, year: int, area_code: str, ele_customer_id: str
     ):
         """
@@ -599,12 +630,12 @@ class CSGClient:
             JSON_KEY_ELE_CUST_ID: ele_customer_id,
             JSON_KEY_METERING_POINT_ID: None,  # this is set to null in api
         }
-        _, resp_data = self._request_with_retry(path, payload)
+        _, resp_data = await self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
 
-    def api_query_day_electric_by_m_point_yesterday(
+    async def api_query_day_electric_by_m_point_yesterday(
         self,
         area_code: str,
         ele_customer_id: str,
@@ -612,12 +643,14 @@ class CSGClient:
         """Contains: power consumption(kWh) of yesterday"""
         path = "charge/queryDayElectricByMPointYesterday"
         payload = {JSON_KEY_ELE_CUST_ID: ele_customer_id, JSON_KEY_AREA_CODE: area_code}
-        _, resp_data = self._request_with_retry(path, payload)
+        _, resp_data = await self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
 
-    def api_query_charges(self, area_code: str, ele_customer_id: str, _type="0"):
+    async def api_query_charges(
+        self, area_code: str, ele_customer_id: str, _type="0"
+    ):
         """Contains: balance and arrears, metering points"""
         path = "charge/queryCharges"
         payload = {
@@ -627,16 +660,16 @@ class CSGClient:
             ],
             "type": _type,
         }
-        _, resp_data = self._request_with_retry(path, payload)
+        _, resp_data = await self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
 
-    def api_logout(self, logon_chan: str, cred_type: LoginType) -> None:
+    async def api_logout(self, logon_chan: str, cred_type: LoginType) -> None:
         """logout"""
         path = "center/logout"
         payload = {JSON_KEY_LOGON_CHAN: logon_chan, JSON_KEY_CRED_TYPE: cred_type}
-        _, resp_data = self._request_with_retry(path, payload)
+        _, resp_data = await self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
@@ -645,7 +678,9 @@ class CSGClient:
 
     # begin utility functions
     @staticmethod
-    def load(data: dict[str, str]) -> CSGClient:
+    def load(
+        data: dict[str, str], session: aiohttp.ClientSession
+    ) -> CSGClient:
         """
         Restore the session info to client object
         The validity of the session won't be checked
@@ -655,6 +690,7 @@ class CSGClient:
             if not data.get(k):
                 raise ValueError(f"missing parameter: {k}")
         client = CSGClient(
+            session=session,
             auth_token=data[ATTR_AUTH_TOKEN],
         )
         return client
@@ -669,22 +705,22 @@ class CSGClient:
         """Set self.auth_token and client generated cookies"""
         self.auth_token = auth_token
 
-    def initialize(self):
+    async def initialize(self):
         """Initialize the client"""
-        resp_data = self.api_get_user_info()
+        resp_data = await self.api_get_user_info()
         self.customer_number = resp_data[JSON_KEY_CUST_NUMBER]
 
-    def verify_login(self) -> bool:
+    async def verify_login(self) -> bool:
         """Verify validity of the session"""
         try:
-            self.api_query_authentication_result()
+            await self.api_query_authentication_result()
         except NotLoggedIn:
             return False
         return True
 
-    def logout(self, login_type: LoginType):
+    async def logout(self, login_type: LoginType):
         """Logout and reset identifier, token etc."""
-        self.api_logout(LOGON_CHANNEL_HANDHELD_HALL, login_type)
+        await self.api_logout(LOGON_CHANNEL_HANDHELD_HALL, login_type)
         self.auth_token = None
         self.customer_number = None
 
@@ -692,13 +728,13 @@ class CSGClient:
 
     # begin high-level api wrappers
 
-    def get_all_electricity_accounts(self) -> list[CSGElectricityAccount]:
+    async def get_all_electricity_accounts(self) -> list[CSGElectricityAccount]:
         """Get all electricity accounts linked to current account"""
         result = []
-        ele_user_resp_data = self.api_get_all_linked_electricity_accounts()
+        ele_user_resp_data = await self.api_get_all_linked_electricity_accounts()
 
         for item in ele_user_resp_data:
-            metering_point_data = self.api_get_metering_point(
+            metering_point_data = await self.api_get_metering_point(
                 item[JSON_KEY_AREA_CODE], item["bindingId"]
             )
             metering_point_id = metering_point_data[0][JSON_KEY_METERING_POINT_ID]
@@ -717,14 +753,14 @@ class CSGClient:
             result.append(account)
         return result
 
-    def get_month_daily_usage_detail(
+    async def get_month_daily_usage_detail(
         self, account: CSGElectricityAccount, year_month: tuple[int, int]
     ) -> tuple[float, list[dict[str, str | float]]]:
         """Get daily usage of current month"""
 
         year, month = year_month
 
-        resp_data = self.api_query_day_electric_by_m_point(
+        resp_data = await self.api_query_day_electric_by_m_point(
             year,
             month,
             account.area_code,
@@ -739,14 +775,14 @@ class CSGClient:
             )
         return month_total_kwh, by_day
 
-    def get_month_daily_cost_detail(
+    async def get_month_daily_cost_detail(
         self, account: CSGElectricityAccount, year_month: tuple[int, int]
     ) -> tuple[float | None, float | None, dict, list[dict[str, str | float]]]:
         """Get daily cost of current month"""
 
         year, month = year_month
 
-        resp_data = self.api_query_day_electric_charge_by_m_point(
+        resp_data = await self.api_query_day_electric_charge_by_m_point(
             year,
             month,
             account.area_code,
@@ -822,24 +858,24 @@ class CSGClient:
 
         return month_total_cost, month_total_kwh, ladder, by_day
 
-    def get_balance_and_arrears(
+    async def get_balance_and_arrears(
         self, account: CSGElectricityAccount
     ) -> tuple[float, float]:
         """Get account balance and arrears"""
 
-        resp_data = self.api_query_account_surplus(
+        resp_data = await self.api_query_account_surplus(
             account.area_code, account.ele_customer_id
         )
         balance = resp_data[0]["balance"]
         arrears = resp_data[0]["arrears"]
         return float(balance), float(arrears)
 
-    def get_year_month_stats(
+    async def get_year_month_stats(
         self, account: CSGElectricityAccount, year
     ) -> tuple[float, float, list[dict[str, str | float]]]:
         """Get year total kWh, year total charge, kWh/charge by month in current year"""
 
-        resp_data = self.api_get_fee_analyze_details(
+        resp_data = await self.api_get_fee_analyze_details(
             year, account.area_code, account.ele_customer_id
         )
 
@@ -856,9 +892,9 @@ class CSGClient:
             )
         return float(total_year_charge), float(total_year_kwh), by_month
 
-    def get_yesterday_kwh(self, account: CSGElectricityAccount) -> float:
+    async def get_yesterday_kwh(self, account: CSGElectricityAccount) -> float:
         """Get power consumption(kwh) of yesterday"""
-        resp_data = self.api_query_day_electric_by_m_point_yesterday(
+        resp_data = await self.api_query_day_electric_by_m_point_yesterday(
             account.area_code, account.ele_customer_id
         )
         if resp_data["power"] is not None:

@@ -1,10 +1,13 @@
 # pylint: disable-all
+import asyncio
 import datetime
 import json
 import os
+import socket
 import sys
 import time
 
+import aiohttp
 from csg_client import (
     LOGIN_TYPE_TO_QR_CODE_TYPE,
     CSGClient,
@@ -21,7 +24,13 @@ FRESH_LOGIN = False
 USERNAME = "" or os.getenv("CSG_USERNAME")
 PASSWORD = "" or os.getenv("CSG_PASSWORD")
 
-if __name__ == "__main__":
+async def main():
+    connector = aiohttp.TCPConnector(family=socket.AF_INET)
+    async with aiohttp.ClientSession(connector=connector) as http_session:
+        await run_demo(http_session)
+
+
+async def run_demo(http_session: aiohttp.ClientSession):
     if not os.path.isfile("session.json"):
         if not FRESH_LOGIN:
             print("错误：未找到保存的登录态，需要将FRESH_LOGIN设为True")
@@ -49,7 +58,7 @@ if __name__ == "__main__":
         if login_type is None:
             print("无效选择，请重试")
             sys.exit(1)
-        client = CSGClient()
+        client = CSGClient(http_session)
 
         if login_type in [LoginType.LOGIN_TYPE_SMS, LoginType.LOGIN_TYPE_PWD_AND_SMS]:
             if not USERNAME or (
@@ -57,13 +66,13 @@ if __name__ == "__main__":
             ):
                 print("错误：请填写用户名和密码，或在环境变量中设置")
                 sys.exit(1)
-            client.api_send_login_sms(USERNAME)
+            await client.api_send_login_sms(USERNAME)
             print("验证码已发送，请输入验证码：")
             code = input().strip()
             if login_type == LoginType.LOGIN_TYPE_SMS:
-                auth_token = client.api_login_with_sms_code(USERNAME, code)
+                auth_token = await client.api_login_with_sms_code(USERNAME, code)
             else:
-                auth_token = client.api_login_with_password_and_sms_code(
+                auth_token = await client.api_login_with_password_and_sms_code(
                     USERNAME, PASSWORD, code
                 )
 
@@ -72,17 +81,17 @@ if __name__ == "__main__":
             LoginType.LOGIN_TYPE_WX_QR,
             LoginType.LOGIN_TYPE_ALI_QR,
         ]:
-            login_id, qr_url = client.api_create_login_qr_code(
+            login_id, qr_url = await client.api_create_login_qr_code(
                 channel=LOGIN_TYPE_TO_QR_CODE_TYPE[login_type]
             )
             print(f"请打开链接扫码登录：{qr_url}")
             start_time = time.time()
             while time.time() - start_time < QR_SCAN_TIMEOUT:
-                ok, auth_token = client.api_get_qr_login_status(login_id)
+                ok, auth_token = await client.api_get_qr_login_status(login_id)
                 if ok:
                     print("扫码成功！")
                     break
-                time.sleep(1)
+                await asyncio.sleep(1)
             else:
                 print("扫码超时，请重试")
                 sys.exit(1)
@@ -95,9 +104,9 @@ if __name__ == "__main__":
     else:
         with open("session.json", encoding="utf-8") as f:
             session_data = json.load(f)
-        client = CSGClient.load(session_data)
+        client = CSGClient.load(session_data, http_session)
 
-    client.initialize()
+    await client.initialize()
 
     session = client.dump()
     with open("session.json", "w", encoding="utf-8") as f:
@@ -106,11 +115,11 @@ if __name__ == "__main__":
 
     # calling utility functions
 
-    print("验证登录状态:", client.verify_login())
+    print("验证登录状态:", await client.verify_login())
 
-    print("用户信息:", client.api_get_user_info())
+    print("用户信息:", await client.api_get_user_info())
 
-    accounts = client.get_all_electricity_accounts()
+    accounts = await client.get_all_electricity_accounts()
     print(f"共{len(accounts)}个绑定的电费账户")
 
     print("电费账户列表:")
@@ -126,7 +135,7 @@ if __name__ == "__main__":
     )
 
     input("按回车获取余额和欠费")
-    bal, arr = client.get_balance_and_arrears(account)
+    bal, arr = await client.get_balance_and_arrears(account)
     print(f"账户 {account.account_number}, 余额: {bal}, 欠费: {arr}")
     input("按回车获取当前月份每日用电数据")
     (
@@ -134,9 +143,13 @@ if __name__ == "__main__":
         month_total_kwh,
         ladder,
         by_day,
-    ) = client.get_month_daily_cost_detail(
+    ) = await client.get_month_daily_cost_detail(
         account, (datetime.datetime.now().year, datetime.datetime.now().month)
     )
     print(
         f"账户 {account.account_number}, 当月总电费: {month_total_cost}, 当月总电量: {month_total_kwh}kWh, 当前阶梯: {ladder}, 每日数据: {by_day}"
     )
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

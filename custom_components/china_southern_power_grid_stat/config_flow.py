@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import socket
 import time
 from typing import Any
 
@@ -20,7 +21,7 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import translation
-from requests import RequestException
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     ABORT_ALL_ADDED,
@@ -59,6 +60,7 @@ from .csg_client import (
     LOGIN_TYPE_TO_QR_CODE_TYPE,
     CSGClient,
     CSGElectricityAccount,
+    CSGTransportError,
     InvalidCredentials,
     LoginType,
 )
@@ -175,7 +177,9 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
             }
         )
-        client: CSGClient = CSGClient()
+        client = CSGClient(
+            async_get_clientsession(self.hass, family=socket.AF_INET)
+        )
         username = self.context["user_data"][CONF_USERNAME]
 
         if user_input is None:
@@ -183,10 +187,8 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors = {}
             error_detail = ""
             try:
-                await self.hass.async_add_executor_job(
-                    client.api_send_login_sms, username
-                )
-            except RequestException:
+                await client.api_send_login_sms(username)
+            except CSGTransportError:
                 errors[CONF_GENERAL_ERROR] = ERROR_CANNOT_CONNECT
             except Exception as ge:
                 _LOGGER.exception("Unexpected exception when sending sms code")
@@ -214,14 +216,11 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         error_detail = ""
         try:
             if login_type == LoginType.LOGIN_TYPE_SMS:
-                auth_token = await self.hass.async_add_executor_job(
-                    client.api_login_with_sms_code,
-                    username,
-                    sms_code,
+                auth_token = await client.api_login_with_sms_code(
+                    username, sms_code
                 )
             elif login_type == LoginType.LOGIN_TYPE_PWD_AND_SMS:
-                auth_token = await self.hass.async_add_executor_job(
-                    client.api_login_with_password_and_sms_code,
+                auth_token = await client.api_login_with_password_and_sms_code(
                     username,
                     password,
                     sms_code,
@@ -230,7 +229,7 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 raise ValueError(
                     f"Invalid login type for step {STEP_VALIDATE_SMS_CODE}: {login_type}"
                 )
-        except RequestException:
+        except CSGTransportError:
             errors[CONF_GENERAL_ERROR] = ERROR_CANNOT_CONNECT
         except InvalidCredentials as ice:
             errors[CONF_GENERAL_ERROR] = ERROR_INVALID_AUTH
@@ -276,12 +275,14 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle QR code login step."""
-        client: CSGClient = CSGClient()
+        client = CSGClient(
+            async_get_clientsession(self.hass, family=socket.AF_INET)
+        )
         if user_input is None:
             # create QR code
             login_type = self.context["user_data"][CONF_LOGIN_TYPE]
-            login_id, image_link = await self.hass.async_add_executor_job(
-                client.api_create_login_qr_code, LOGIN_TYPE_TO_QR_CODE_TYPE[login_type]
+            login_id, image_link = await client.api_create_login_qr_code(
+                LOGIN_TYPE_TO_QR_CODE_TYPE[login_type]
             )
             self.context["user_data"]["login_id"] = login_id
             self.context["user_data"]["image_link"] = image_link
@@ -303,16 +304,16 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Get QR scan status after user has scanned the code"""
-        client: CSGClient = CSGClient()
+        client = CSGClient(
+            async_get_clientsession(self.hass, family=socket.AF_INET)
+        )
         login_type = self.context["user_data"][CONF_LOGIN_TYPE]
         login_id = self.context["user_data"]["login_id"]
-        ok, auth_token = await self.hass.async_add_executor_job(
-            client.api_get_qr_login_status, login_id
-        )
+        ok, auth_token = await client.api_get_qr_login_status(login_id)
         if ok:
             # for QR login, use mobile number as username
             client.set_authentication_params(auth_token)
-            user_info = await self.hass.async_add_executor_job(client.api_get_user_info)
+            user_info = await client.api_get_user_info()
             username = user_info["mobile"]
             await self.check_and_set_unique_id(username)
             return await self.create_or_update_config_entry(
@@ -466,17 +467,16 @@ class CSGOptionsFlowHandler(config_entries.OptionsFlow):
         client = CSGClient.load(
             {
                 CONF_AUTH_TOKEN: self.config_entry.data[CONF_AUTH_TOKEN],
-            }
+            },
+            async_get_clientsession(self.hass, family=socket.AF_INET),
         )
-        logged_in = await self.hass.async_add_executor_job(client.verify_login)
+        logged_in = await client.verify_login()
         if not logged_in:
             # token expired
             raise ConfigEntryAuthFailed("Login expired")
-        await self.hass.async_add_executor_job(client.initialize)
+        await client.initialize()
 
-        accounts = await self.hass.async_add_executor_job(
-            client.get_all_electricity_accounts
-        )
+        accounts = await client.get_all_electricity_accounts()
         self.all_electricity_accounts = accounts
         if not accounts:
             _LOGGER.warning(
