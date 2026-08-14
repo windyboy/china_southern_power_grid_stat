@@ -94,14 +94,13 @@ def encrypt_credential(password: str) -> str:
 
 
 def encrypt_params(params: dict) -> str:
-    """Decrypt response message using AES with KEY, IV"""
+    """Encrypt request parameters with byte-aligned zero padding."""
     json_cipher = AES.new(PARAM_KEY, AES.MODE_CBC, PARAM_IV)
-
-    def pad(content: str) -> str:
-        return content + (16 - len(content) % 16) * "\x00"
-
-    json_str = json.dumps(params, ensure_ascii=False, separators=(",", ":"))
-    encrypted = json_cipher.encrypt(pad(json_str).encode("utf8"))
+    json_bytes = json.dumps(
+        params, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    padding_length = AES.block_size - len(json_bytes) % AES.block_size
+    encrypted = json_cipher.encrypt(json_bytes + b"\x00" * padding_length)
     return b64encode(encrypted).decode()
 
 
@@ -275,9 +274,8 @@ class CSGClient:
         can automatically add authentication header(s)
         """
         _LOGGER.debug(
-            "_make_request: %s, data=%s, auth=%s, method=%s",
+            "CSG request: path=%s auth=%s method=%s",
             path,
-            payload,
             with_auth,
             method,
         )
@@ -322,9 +320,10 @@ class CSGClient:
                         f"Response for {path} is not a JSON object: {type(response_data)}"
                     )
                 _LOGGER.debug(
-                    "_make_request: %s, response: %s",
+                    "CSG response: path=%s sta=%s keys=%s",
                     path,
-                    json.dumps(response_data, ensure_ascii=False),
+                    response_data.get(JSON_KEY_STA),
+                    sorted(response_data),
                 )
 
                 # headers need to be returned since they may contain additional data
@@ -342,10 +341,9 @@ class CSGClient:
                 f"response_data must be a dict for {api_path}, got {type(response_data)}"
             )
         _LOGGER.debug(
-            "Account customer number: %s, unsuccessful response while calling %s: %s",
-            self.customer_number,
+            "CSG unsuccessful response: path=%s sta=%s",
             api_path,
-            response_data,
+            response_data.get(JSON_KEY_STA),
         )
         sta = response_data.get(JSON_KEY_STA)
         msg = response_data.get(JSON_KEY_MESSAGE)
@@ -391,7 +389,10 @@ class CSGClient:
             path, payload, with_auth=False, base_path=BASE_PATH_WEB
         )
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
-            return login_id, resp_data[JSON_KEY_DATA]
+            image_link = resp_data.get(JSON_KEY_DATA)
+            if not isinstance(image_link, str) or not image_link:
+                raise CSGAPIError("INVALID_RESPONSE", "Missing QR image URL")
+            return login_id, image_link
         self._handle_unsuccessful_response(path, resp_data)
 
     async def api_get_qr_login_status(self, login_id: str) -> tuple[bool, str]:
@@ -409,6 +410,8 @@ class CSGClient:
             return True, resp_header[HEADER_X_AUTH_TOKEN]
         if resp_data[JSON_KEY_STA] == RESP_STA_QR_NOT_SCANNED:
             return False, ""
+        if resp_data[JSON_KEY_STA] == RESP_STA_QR_TIMEOUT:
+            raise QrCodeExpired
         self._handle_unsuccessful_response(path, resp_data)
 
     async def api_login_with_sms_code(self, phone_no: str, sms_code: str):
@@ -480,10 +483,13 @@ class CSGClient:
         path = "eleCustNumber/queryBindEleUsers"
         _, resp_data = await self._request_with_retry(path, {})
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
+            data = resp_data.get(JSON_KEY_DATA)
+            if not isinstance(data, list):
+                return []
             _LOGGER.debug(
-                "Total %d users under this account", len(resp_data[JSON_KEY_DATA])
+                "Total %d users under this account", len(data)
             )
-            return resp_data[JSON_KEY_DATA]
+            return data
         self._handle_unsuccessful_response(path, resp_data)
 
     async def api_get_metering_point(
@@ -708,6 +714,8 @@ class CSGClient:
     async def initialize(self):
         """Initialize the client"""
         resp_data = await self.api_get_user_info()
+        if not isinstance(resp_data, dict) or not resp_data.get(JSON_KEY_CUST_NUMBER):
+            raise CSGAPIError("INVALID_RESPONSE", "Missing customer number")
         self.customer_number = resp_data[JSON_KEY_CUST_NUMBER]
 
     async def verify_login(self) -> bool:
@@ -734,13 +742,47 @@ class CSGClient:
         ele_user_resp_data = await self.api_get_all_linked_electricity_accounts()
 
         for item in ele_user_resp_data:
-            metering_point_data = await self.api_get_metering_point(
-                item[JSON_KEY_AREA_CODE], item["bindingId"]
+            if not isinstance(item, dict):
+                continue
+            required_account_keys = (
+                JSON_KEY_AREA_CODE,
+                "bindingId",
+                "eleCustNumber",
+                "eleAddress",
+                "userName",
             )
-            metering_point_id = metering_point_data[0][JSON_KEY_METERING_POINT_ID]
-            metering_point_number = metering_point_data[0][
-                JSON_KEY_METERING_POINT_NUMBER
-            ]
+            if any(item.get(key) is None for key in required_account_keys):
+                _LOGGER.warning(
+                    "Skipping malformed linked electricity account; keys=%s",
+                    sorted(item),
+                )
+                continue
+            try:
+                metering_point_data = await self.api_get_metering_point(
+                    item[JSON_KEY_AREA_CODE], item["bindingId"]
+                )
+            except CSGAPIError as err:
+                if err.sta != RESP_STA_NO_METERING_POINT:
+                    raise
+                _LOGGER.warning(
+                    "Skipping linked electricity account without a metering point"
+                )
+                continue
+            if not isinstance(metering_point_data, list) or not metering_point_data:
+                _LOGGER.warning(
+                    "Skipping linked electricity account with empty metering data"
+                )
+                continue
+            metering_point = metering_point_data[0]
+            if not isinstance(metering_point, dict):
+                continue
+            metering_point_id = metering_point.get(JSON_KEY_METERING_POINT_ID)
+            metering_point_number = metering_point.get(JSON_KEY_METERING_POINT_NUMBER)
+            if metering_point_id is None or metering_point_number is None:
+                _LOGGER.warning(
+                    "Skipping linked electricity account with malformed metering data"
+                )
+                continue
             account = CSGElectricityAccount(
                 account_number=item["eleCustNumber"],
                 area_code=item[JSON_KEY_AREA_CODE],
@@ -767,9 +809,17 @@ class CSGClient:
             account.ele_customer_id,
             account.metering_point_id,
         )
-        month_total_kwh = float(resp_data["totalPower"])
+        if not isinstance(resp_data, dict):
+            return 0.0, []
+        total_power = resp_data.get("totalPower")
+        month_total_kwh = float(total_power) if total_power is not None else 0.0
         by_day = []
-        for d_data in resp_data["result"]:
+        result = resp_data.get("result")
+        for d_data in result if isinstance(result, list) else []:
+            if not isinstance(d_data, dict):
+                continue
+            if d_data.get("date") is None or d_data.get("power") is None:
+                continue
             by_day.append(
                 {WF_ATTR_DATE: d_data["date"], WF_ATTR_KWH: float(d_data["power"])}
             )
@@ -790,8 +840,15 @@ class CSGClient:
             account.metering_point_id,
         )
 
+        if not isinstance(resp_data, dict):
+            return None, None, {}, []
         by_day = []
-        for d_data in resp_data["result"]:
+        result = resp_data.get("result")
+        for d_data in result if isinstance(result, list) else []:
+            if not isinstance(d_data, dict):
+                continue
+            if any(d_data.get(key) is None for key in ("date", "charge", "power")):
+                continue
             by_day.append(
                 {
                     WF_ATTR_DATE: d_data["date"],
@@ -802,23 +859,23 @@ class CSGClient:
 
         # sometimes the data by day is present, but the total amount and ladder are not
 
-        if resp_data["totalElectricity"] is not None:
+        if resp_data.get("totalElectricity") is not None:
             month_total_cost = float(resp_data["totalElectricity"])
         else:
             month_total_cost = None
 
-        if resp_data["totalPower"] is not None:
+        if resp_data.get("totalPower") is not None:
             month_total_kwh = float(resp_data["totalPower"])
         else:
             month_total_kwh = None
 
         # sometimes the ladder info is null, handle that
-        if resp_data["ladderEle"] is not None:
+        if resp_data.get("ladderEle") is not None:
             current_ladder = int(resp_data["ladderEle"])
         else:
             current_ladder = None
         # API 返回格式可能是 "2023-05-01 00:00:00.0" 或 "2023-05-01 00:00:00"
-        if resp_data["ladderEleStartDate"] is not None:
+        if resp_data.get("ladderEleStartDate") is not None:
             date_str = resp_data["ladderEleStartDate"]
             try:
                 # 先尝试带毫秒的格式
@@ -840,11 +897,11 @@ class CSGClient:
                     current_ladder_start_date = None
         else:
             current_ladder_start_date = None
-        if resp_data["ladderEleSurplus"] is not None:
+        if resp_data.get("ladderEleSurplus") is not None:
             current_ladder_remaining_kwh = float(resp_data["ladderEleSurplus"])
         else:
             current_ladder_remaining_kwh = None
-        if resp_data["ladderEleTariff"] is not None:
+        if resp_data.get("ladderEleTariff") is not None:
             current_tariff = float(resp_data["ladderEleTariff"])
         else:
             current_tariff = None
@@ -866,8 +923,12 @@ class CSGClient:
         resp_data = await self.api_query_account_surplus(
             account.area_code, account.ele_customer_id
         )
-        balance = resp_data[0]["balance"]
-        arrears = resp_data[0]["arrears"]
+        if not isinstance(resp_data, list) or not resp_data:
+            return 0.0, 0.0
+        if not isinstance(resp_data[0], dict):
+            return 0.0, 0.0
+        balance = resp_data[0].get("balance") or 0
+        arrears = resp_data[0].get("arrears") or 0
         return float(balance), float(arrears)
 
     async def get_year_month_stats(
@@ -878,11 +939,24 @@ class CSGClient:
         resp_data = await self.api_get_fee_analyze_details(
             year, account.area_code, account.ele_customer_id
         )
-
-        total_year_kwh = resp_data["totalBillingElectricity"]
-        total_year_charge = resp_data["totalActualAmount"]
+        if not isinstance(resp_data, dict):
+            return 0.0, 0.0, []
+        total_year_kwh = resp_data.get("totalBillingElectricity") or 0
+        total_year_charge = resp_data.get("totalActualAmount") or 0
         by_month = []
-        for m_data in resp_data["electricAndChargeList"]:
+        monthly_data = resp_data.get("electricAndChargeList")
+        for m_data in monthly_data if isinstance(monthly_data, list) else []:
+            if not isinstance(m_data, dict):
+                continue
+            if any(
+                m_data.get(key) is None
+                for key in (
+                    JSON_KEY_YEAR_MONTH,
+                    "actualTotalAmount",
+                    "billingElectricity",
+                )
+            ):
+                continue
             by_month.append(
                 {
                     WF_ATTR_MONTH: m_data[JSON_KEY_YEAR_MONTH],
@@ -892,12 +966,15 @@ class CSGClient:
             )
         return float(total_year_charge), float(total_year_kwh), by_month
 
-    async def get_yesterday_kwh(self, account: CSGElectricityAccount) -> float:
+    async def get_yesterday_kwh(
+        self, account: CSGElectricityAccount
+    ) -> float | None:
         """Get power consumption(kwh) of yesterday"""
         resp_data = await self.api_query_day_electric_by_m_point_yesterday(
             account.area_code, account.ele_customer_id
         )
-        if resp_data["power"] is not None:
+        if isinstance(resp_data, dict) and resp_data.get("power") is not None:
             return float(resp_data["power"])
+        return None
 
     # end high-level api wrappers

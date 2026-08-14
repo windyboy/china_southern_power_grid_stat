@@ -43,6 +43,7 @@ ERROR_CANNOT_CONNECT = "cannot_connect"
 ERROR_INVALID_AUTH = "invalid_auth"
 ERROR_UNKNOWN = "unknown"
 ERROR_QR_NOT_SCANNED = "qr_not_scanned"
+ERROR_QR_EXPIRED = "qr_expired"
 
 # UI
 LOGIN_TYPE_TO_QR_APP_NAME = {

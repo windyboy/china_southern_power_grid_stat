@@ -3,8 +3,10 @@
 # 南方电网电费数据HA集成
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://github.com/hacs/integration)
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/cubicpill/china_southern_power_grid_stat)](https://github.com/CubicPill/china_southern_power_grid_stat/releases)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/windyboy/china_southern_power_grid_stat)](https://github.com/windyboy/china_southern_power_grid_stat/releases)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+
+本仓库维护自 [CubicPill/china_southern_power_grid_stat](https://github.com/CubicPill/china_southern_power_grid_stat) 的 fork，感谢原项目及贡献者。
 
 ## 支持功能
 
@@ -35,7 +37,7 @@
 ❌因为南网登录API调整，不再支持登录态失效之后自动重新登录，需要手动重新登录。
 ## 使用方法
 
-使用[HACS](https://hacs.xyz/)或[手动下载安装](https://github.com/CubicPill/china_southern_power_grid_stat/releases)
+使用[HACS](https://hacs.xyz/)或[手动下载安装](https://github.com/windyboy/china_southern_power_grid_stat/releases)
 
 注意：本集成要求 `Home Assistant` 最低版本为 `2023.11`。
 
@@ -48,15 +50,15 @@ IPv4；仅 IPv6 只解析、连接 IPv6 且不会回退；自动模式在 IPv6 �
 
 支持的登录方式
 
-<img src="https://raw.githubusercontent.com/CubicPill/china_southern_power_grid_stat/master/img/setup_login.png" alt="" style="width: 400px;">
+<img src="https://raw.githubusercontent.com/windyboy/china_southern_power_grid_stat/main/img/setup_login.png" alt="" style="width: 400px;">
 
 配置界面
 
-<img src="https://raw.githubusercontent.com/CubicPill/china_southern_power_grid_stat/master/img/setup_add_account.png" alt="" style="width: 400px;">
+<img src="https://raw.githubusercontent.com/windyboy/china_southern_power_grid_stat/main/img/setup_add_account.png" alt="" style="width: 400px;">
 
 添加缴费号
 
-<img src="https://raw.githubusercontent.com/CubicPill/china_southern_power_grid_stat/master/img/setup_select_account.png" alt="" style="width: 400px;">
+<img src="https://raw.githubusercontent.com/windyboy/china_southern_power_grid_stat/main/img/setup_select_account.png" alt="" style="width: 400px;">
 
 传感器列表
 - 余额
@@ -81,11 +83,11 @@ IPv4；仅 IPv6 只解析、连接 IPv6 且不会回退；自动模式在 IPv6 �
 
 传感器额外参数（每月用量、每日用量）
 
-<img src="https://raw.githubusercontent.com/CubicPill/china_southern_power_grid_stat/master/img/sensor_attr.png" alt="" style="width: 400px;">
+<img src="https://raw.githubusercontent.com/windyboy/china_southern_power_grid_stat/main/img/sensor_attr.png" alt="" style="width: 400px;">
 
 参数设置
 
-<img src="https://raw.githubusercontent.com/CubicPill/china_southern_power_grid_stat/master/img/setup_params.png" alt="" style="width: 400px;">
+<img src="https://raw.githubusercontent.com/windyboy/china_southern_power_grid_stat/main/img/setup_params.png" alt="" style="width: 400px;">
 
 ### 数据更新策略
 
@@ -137,7 +139,7 @@ IPv4；仅 IPv6 只解析、连接 IPv6 且不会回退；自动模式在 IPv6 �
 
 ### API 实现库
 
-本项目代码中的[`csg_client/__init__.py`](https://github.com/CubicPill/china_southern_power_grid_stat/blob/master/custom_components/china_southern_power_grid_stat/csg_client/__init__.py)
+本项目代码中的[`csg_client/__init__.py`](https://github.com/windyboy/china_southern_power_grid_stat/blob/main/custom_components/china_southern_power_grid_stat/csg_client/__init__.py)
 是对南网在线 App API 的实现，可以独立于此项目单独使用。
 客户端基于 `aiohttp`，所有网络方法均需使用 `await` 调用。详细使用方法见
 `csg_client_demo.py`。
@@ -153,7 +155,5 @@ IPv4；仅 IPv6 只解析、连接 IPv6 且不会回退；自动模式在 IPv6 �
 - [【抄作业】电费插件(NR流)-南网](https://bbs.hassbian.com/thread-18122-1-1.html)
 
 自定义集成教程参考：[Building a Home Assistant Custom Component Part 1: Project Structure and Basics](https://aarongodfrey.dev/home%20automation/building_a_home_assistant_custom_component_part_1/)
-
-
 
 

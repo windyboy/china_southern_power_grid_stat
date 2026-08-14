@@ -1,90 +1,85 @@
 {
   "config": {
     "abort": {
-      "already_configured": "账号已添加，请勿重复添加",
-      "reauth_successful": "登录成功"
+      "already_configured": "This account is already configured",
+      "reauth_successful": "Authentication was successful",
+      "unique_id_mismatch": "The authenticated account does not match the existing account"
     },
     "error": {
-      "cannot_connect": "网络异常",
-      "invalid_auth": "登录信息无效",
-      "qr_not_scanned": "扫描二维码并确认登录",
+      "cannot_connect": "Unable to connect",
+      "invalid_auth": "Invalid authentication",
+      "qr_not_scanned": "Scan the QR code and confirm the login",
+      "qr_expired": "The QR code expired. Refresh it and try again",
       "unknown": "An unknown error occurred"
     },
     "step": {
       "user": {
-        "title": "选择登录方式",
-        "description": "选择用于登录南方电网账号的方式",
+        "title": "Choose a login method",
+        "description": "Choose how to sign in to your China Southern Power Grid account",
         "menu_options": {
-          "sms_login": "短信验证码登录",
-          "sms_pwd_login": "短信验证码和密码登录",
-          "csg_qr_login": "南网APP扫码登录",
-          "wx_qr_login": "微信扫码登录",
-          "ali_qr_login": "支付宝扫码登录"
+          "sms_login": "SMS verification code",
+          "sms_pwd_login": "Password and SMS code",
+          "csg_qr_login": "CSG app QR code",
+          "wx_qr_login": "WeChat QR code",
+          "ali_qr_login": "Alipay QR code"
         }
       },
       "network": {
         "title": "Network protocol",
         "description": "Choose the network protocol used to reach the CSG servers",
-        "data": {
-          "ip_family": "Network protocol"
-        }
+        "data": {"ip_family": "Network protocol"}
       },
       "sms_login": {
-        "title": "登录南方电网",
-        "description": "使用手机号和短信验证码登录",
+        "title": "Sign in to CSG",
+        "description": "Sign in with a phone number and SMS verification code",
         "data": {
           "username": "Phone number",
-          "username_invalid": "Please enter an 11-digit phone number"
+          "username_invalid": "Enter an 11-digit phone number"
         }
       },
       "sms_pwd_login": {
-        "title": "登录南方电网",
-        "description": "使用手机号、密码和短信验证码登录",
+        "title": "Sign in to CSG",
+        "description": "Sign in with a phone number, password, and SMS verification code",
         "data": {
           "username": "Phone number",
-          "username_invalid": "Please enter an 11-digit phone number",
+          "username_invalid": "Enter an 11-digit phone number",
           "password": "Password",
-          "password_invalid": "Please enter an 8-16 character password"
+          "password_invalid": "Enter an 8-16 character password"
         }
       },
       "validate_sms_code": {
-        "title": "输入短信验证码",
-        "description": "验证码已发送到: {phone_no}",
+        "title": "Enter the SMS code",
+        "description": "A verification code was sent to {phone_no}",
         "data": {
-          "code": "SMS code",
-          "code_invalid": "Please enter the 6-digit SMS code"
+          "sms_code": "SMS code",
+          "sms_code_invalid": "Enter the 6-digit SMS code"
         }
       },
       "qr_login": {
-        "title": "扫码登录",
+        "title": "Sign in with a QR code",
         "description": "{description}",
-        "data": {
-          "refresh_qr_code": "刷新二维码"
-        }
+        "data": {"refresh_qr_code": "Refresh QR code"}
       },
       "reauth_confirm": {
-        "title": "重新登录账号",
-        "description": "登录状态已过期，请重新登录"
+        "title": "Sign in again",
+        "description": "Your login expired. Sign in again to continue"
       }
     }
   },
   "options": {
     "abort": {
-      "no_account": "账户未绑定缴费号",
-      "all_added": "没有可添加到此集成的缴费号"
+      "no_account": "No electricity accounts are linked to this account",
+      "all_added": "All linked electricity accounts have already been added",
+      "reauth_required": "Your login expired. Reauthentication has started"
     },
     "step": {
-      "init": {
-        "title": "选择操作"
-      },
-      "add_account": {
-        "title": "选择缴费号"
-      },
+      "init": {"title": "Choose an action"},
+      "add_account": {"title": "Choose an electricity account"},
       "settings": {
-        "title": "参数设置",
+        "title": "Settings",
         "description": "Automatic IPv4/IPv6 is the default. IPv4 only forces IPv4; IPv6 only forces IPv6 and never falls back. Auto may be delayed when IPv6 resolves but is unreachable.",
         "data": {
-          "update_interval": "更新间隔（秒）",
+          "update_interval": "Update interval (seconds)",
           "ip_family": "Network protocol"
         }
       }

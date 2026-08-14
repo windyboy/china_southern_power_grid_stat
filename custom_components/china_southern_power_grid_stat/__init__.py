@@ -2,6 +2,7 @@
 """The China Southern Power Grid Statistics integration."""
 from __future__ import annotations
 
+import copy
 import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -23,32 +24,33 @@ from .const import (
     DOMAIN,
 )
 from .csg_client import (
-    CSGAPIError,
     CSGClient,
-    CSGElectricityAccount,
     CSGTransportError,
-    InvalidCredentials,
-    NotLoggedIn,
 )
-from .sensor import CSGCostSensor, CSGEnergySensor
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 _LOGGER = logging.getLogger(__name__)
 
 
-def _create_options_update_listener(
+def _create_entry_update_listener(
+    initial_data: Mapping[str, Any],
     initial_options: Mapping[str, Any],
 ) -> Callable[[HomeAssistant, ConfigEntry], Awaitable[None]]:
-    """Create a listener that ignores unrelated config-entry data updates."""
-    previous_options = dict(initial_options)
+    """Reload when either config-entry data or options change."""
+    previous_data = copy.deepcopy(dict(initial_data))
+    previous_options = copy.deepcopy(dict(initial_options))
 
     async def _async_reload_on_options_update(
         hass: HomeAssistant, updated_entry: ConfigEntry
     ) -> None:
-        nonlocal previous_options
-        if updated_entry.options == previous_options:
+        nonlocal previous_data, previous_options
+        if (
+            updated_entry.data == previous_data
+            and updated_entry.options == previous_options
+        ):
             return
-        previous_options = dict(updated_entry.options)
+        previous_data = copy.deepcopy(dict(updated_entry.data))
+        previous_options = copy.deepcopy(dict(updated_entry.options))
         await hass.config_entries.async_reload(updated_entry.entry_id)
 
     return _async_reload_on_options_update
@@ -77,12 +79,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Optional: remove legacy password from stored config if present
     if CONF_PASSWORD in entry.data:
-        new_data = entry.data.copy()
+        new_data = copy.deepcopy(entry.data)
         new_data.pop(CONF_PASSWORD, None)
         hass.config_entries.async_update_entry(entry, data=new_data)
 
     entry.async_on_unload(
-        entry.add_update_listener(_create_options_update_listener(entry.options))
+        entry.add_update_listener(
+            _create_entry_update_listener(entry.data, entry.options)
+        )
     )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -92,9 +96,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    _LOGGER.debug(f"Unloading entry: {entry.title}")
+    _LOGGER.debug("Unloading entry: %s", entry.title)
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    _LOGGER.debug(f"Unload platforms for entry: {entry.title}, success: {unload_ok}")
+    _LOGGER.debug("Unload platforms for entry: %s, success: %s", entry.title, unload_ok)
     hass.data[DOMAIN].pop(entry.entry_id)
     return True
 
@@ -106,8 +110,15 @@ async def async_remove_config_entry_device(
     if not device_entry.identifiers:
         _LOGGER.warning("Cannot remove device with no identifiers: %s", device_entry)
         return False
-    _LOGGER.info(f"removing device {device_entry.name}")
-    account_num = list(device_entry.identifiers)[0][1]
+    _LOGGER.info("Removing device %s", device_entry.name)
+    identifier = next(
+        (value for domain, value in device_entry.identifiers if domain == DOMAIN), None
+    )
+    if identifier is None:
+        _LOGGER.warning("Cannot remove device without a %s identifier", DOMAIN)
+        return False
+    entry_prefix = f"{config_entry.entry_id}:"
+    account_num = identifier.removeprefix(entry_prefix)
 
     # remove entities
     entity_reg = entity_registry.async_get(hass)
@@ -116,13 +127,18 @@ async def async_remove_config_entry_device(
         for ent in entity_registry.async_entries_for_config_entry(
             entity_reg, config_entry.entry_id
         )
-        if account_num in ent.unique_id
+        if ent.unique_id.startswith(
+            (
+                f"{DOMAIN}.{config_entry.entry_id}.{account_num}.",
+                f"{DOMAIN}.{account_num}.",
+            )
+        )
     }
     for entity_id in entities.values():
         entity_reg.async_remove(entity_id)
 
     # update config entry (only if account was in config)
-    new_data = config_entry.data.copy()
+    new_data = copy.deepcopy(config_entry.data)
     if new_data[CONF_ELE_ACCOUNTS].pop(account_num, None) is None:
         _LOGGER.debug("Account %s was not in config, skip update", account_num)
         return True

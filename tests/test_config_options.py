@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import socket
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from homeassistant.const import CONF_USERNAME
+from homeassistant.data_entry_flow import AbortFlow
 
 from custom_components.china_southern_power_grid_stat import (
-    _create_options_update_listener,
+    _create_entry_update_listener,
 )
 from custom_components.china_southern_power_grid_stat.config import (
     async_get_csg_clientsession,
@@ -31,6 +33,7 @@ from custom_components.china_southern_power_grid_stat.const import (
     CONF_SETTINGS,
     CONF_UPDATE_INTERVAL,
     ERROR_CANNOT_CONNECT,
+    ERROR_QR_EXPIRED,
     IP_FAMILY_AUTO,
     IP_FAMILY_IPV4,
     IP_FAMILY_IPV6,
@@ -38,6 +41,7 @@ from custom_components.china_southern_power_grid_stat.const import (
 from custom_components.china_southern_power_grid_stat.csg_client import (
     CSGTransportError,
     LoginType,
+    QrCodeExpired,
 )
 
 
@@ -112,7 +116,7 @@ def test_config_flow_passes_entry_to_options_handler():
 
 
 @pytest.mark.asyncio
-async def test_options_listener_reloads_once_only_when_options_change():
+async def test_entry_listener_reloads_once_when_data_or_options_change():
     class FakeConfigEntries:
         def __init__(self):
             self.reloads = []
@@ -122,15 +126,21 @@ async def test_options_listener_reloads_once_only_when_options_change():
 
     config_entries = FakeConfigEntries()
     hass = SimpleNamespace(config_entries=config_entries)
-    entry = make_entry(options={CONF_IP_FAMILY: IP_FAMILY_IPV4})
-    listener = _create_options_update_listener(entry.options)
+    entry = make_entry(
+        options={CONF_IP_FAMILY: IP_FAMILY_IPV4},
+        data={CONF_ELE_ACCOUNTS: {}},
+    )
+    listener = _create_entry_update_listener(entry.data, entry.options)
 
+    await listener(hass, entry)
+    entry.data = {CONF_ELE_ACCOUNTS: {"account": {"id": 1}}}
+    await listener(hass, entry)
     await listener(hass, entry)
     entry.options = {CONF_IP_FAMILY: IP_FAMILY_AUTO}
     await listener(hass, entry)
     await listener(hass, entry)
 
-    assert config_entries.reloads == [entry.entry_id]
+    assert config_entries.reloads == [entry.entry_id, entry.entry_id]
 
 
 @pytest.mark.asyncio
@@ -256,6 +266,56 @@ def test_config_flow_get_ip_family_defaults_to_auto_without_selection():
     flow.context = {"user_data": {}}
 
     assert flow._get_ip_family() == IP_FAMILY_AUTO
+
+
+@pytest.mark.asyncio
+async def test_reauth_accepts_same_unique_id_and_rejects_different_account():
+    flow = object.__new__(CSGConfigFlow)
+    flow.async_set_unique_id = AsyncMock()
+    flow._reauth_entry = SimpleNamespace(unique_id="CSG-13800000000")
+
+    await flow.check_and_set_unique_id("13800000000")
+
+    with pytest.raises(AbortFlow) as exc_info:
+        await flow.check_and_set_unique_id("13900000000")
+    assert exc_info.value.reason == "unique_id_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_new_entry_still_checks_for_duplicate_unique_id():
+    flow = object.__new__(CSGConfigFlow)
+    flow.async_set_unique_id = AsyncMock()
+    flow._reauth_entry = None
+    flow._abort_if_unique_id_configured = lambda: (_ for _ in ()).throw(
+        AbortFlow("already_configured")
+    )
+
+    with pytest.raises(AbortFlow) as exc_info:
+        await flow.check_and_set_unique_id("13800000000")
+    assert exc_info.value.reason == "already_configured"
+
+
+@pytest.mark.asyncio
+async def test_qr_expiry_clears_stale_image_and_prompts_refresh():
+    flow = object.__new__(CSGConfigFlow)
+    flow.context = {
+        "user_data": {
+            CONF_LOGIN_TYPE: LoginType.LOGIN_TYPE_CSG_QR,
+            "login_id": "old-id",
+            "image_link": "https://example.invalid/old.png",
+        }
+    }
+    client = SimpleNamespace(
+        api_get_qr_login_status=AsyncMock(side_effect=QrCodeExpired)
+    )
+    flow._new_client = lambda: client
+    flow._show_qr_form = lambda _login_type, errors=None: {"errors": errors}
+
+    result = await flow.async_step_validate_qr_login()
+
+    assert result["errors"] == {CONF_GENERAL_ERROR: ERROR_QR_EXPIRED}
+    assert "login_id" not in flow.context["user_data"]
+    assert "image_link" not in flow.context["user_data"]
 
 
 def test_config_flow_new_client_uses_selected_family(monkeypatch):

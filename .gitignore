@@ -1,1 +1,3 @@
 **/*.pyc
+session.json
+**/session.json
