@@ -10,7 +10,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import entity_registry
 from homeassistant.helpers.device_registry import DeviceEntry
 
@@ -26,6 +26,7 @@ from .csg_client import (
     CSGAPIError,
     CSGClient,
     CSGElectricityAccount,
+    CSGTransportError,
     InvalidCredentials,
     NotLoggedIn,
 )
@@ -65,7 +66,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         },
         session,
     )
-    if not await client.verify_login():
+    try:
+        login_ok = await client.verify_login()
+    except CSGTransportError as err:
+        raise ConfigEntryNotReady(f"CSG network unreachable: {err}") from err
+    if not login_ok:
         raise ConfigEntryAuthFailed("Login expired")
 
     hass.data[DOMAIN][entry.entry_id] = {}

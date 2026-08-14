@@ -23,6 +23,7 @@ from custom_components.china_southern_power_grid_stat.config_flow import (
 )
 from custom_components.china_southern_power_grid_stat.const import (
     CONF_ACCOUNT_NUMBER,
+    CONF_AUTH_TOKEN,
     CONF_ELE_ACCOUNTS,
     CONF_GENERAL_ERROR,
     CONF_IP_FAMILY,
@@ -353,3 +354,55 @@ async def test_create_entry_persists_selected_ip_family():
     )
 
     assert captured["options"] == {CONF_IP_FAMILY: IP_FAMILY_IPV6}
+
+
+@pytest.mark.asyncio
+async def test_setup_entry_transport_error_becomes_not_ready(monkeypatch):
+    from homeassistant.exceptions import ConfigEntryNotReady
+
+    from custom_components.china_southern_power_grid_stat import async_setup_entry
+
+    class BoomClient:
+        async def verify_login(self):
+            raise CSGTransportError("timeout")
+
+    monkeypatch.setattr(
+        "custom_components.china_southern_power_grid_stat.async_get_csg_clientsession",
+        lambda hass, entry: object(),
+    )
+    monkeypatch.setattr(
+        "custom_components.china_southern_power_grid_stat.CSGClient",
+        SimpleNamespace(load=lambda data, session: BoomClient()),
+    )
+
+    hass = SimpleNamespace(data={})
+    entry = make_entry(data={CONF_AUTH_TOKEN: "token"})
+
+    with pytest.raises(ConfigEntryNotReady):
+        await async_setup_entry(hass, entry)
+
+
+@pytest.mark.asyncio
+async def test_setup_entry_expired_login_raises_auth_failed(monkeypatch):
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    from custom_components.china_southern_power_grid_stat import async_setup_entry
+
+    class ExpiredClient:
+        async def verify_login(self):
+            return False
+
+    monkeypatch.setattr(
+        "custom_components.china_southern_power_grid_stat.async_get_csg_clientsession",
+        lambda hass, entry: object(),
+    )
+    monkeypatch.setattr(
+        "custom_components.china_southern_power_grid_stat.CSGClient",
+        SimpleNamespace(load=lambda data, session: ExpiredClient()),
+    )
+
+    hass = SimpleNamespace(data={})
+    entry = make_entry(data={CONF_AUTH_TOKEN: "token"})
+
+    with pytest.raises(ConfigEntryAuthFailed):
+        await async_setup_entry(hass, entry)
