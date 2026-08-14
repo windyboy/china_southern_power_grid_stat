@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import socket
 import time
 
 from homeassistant.config_entries import ConfigEntry
@@ -10,6 +11,7 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import entity_registry
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceEntry
 
 from .const import (
@@ -37,12 +39,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
 
     # validate session, re-authenticate if needed
+    session = async_get_clientsession(hass, family=socket.AF_INET)
     client = CSGClient.load(
         {
             CONF_AUTH_TOKEN: entry.data[CONF_AUTH_TOKEN],
-        }
+        },
+        session,
     )
-    if not await hass.async_add_executor_job(client.verify_login):
+    if not await client.verify_login():
         raise ConfigEntryAuthFailed("Login expired")
 
     hass.data[DOMAIN][entry.entry_id] = {}
@@ -112,14 +116,13 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     _LOGGER.info("Removing entry: account %s", entry.data[CONF_USERNAME])
 
     # logout
-    def client_logout():
-        client = CSGClient.load(
-            {
-                CONF_AUTH_TOKEN: entry.data[CONF_AUTH_TOKEN],
-            }
-        )
-        if client.verify_login():
-            client.logout(entry.data[CONF_LOGIN_TYPE])
-            _LOGGER.info("CSG account %s logged out", entry.data[CONF_USERNAME])
-
-    await hass.async_add_executor_job(client_logout)
+    session = async_get_clientsession(hass, family=socket.AF_INET)
+    client = CSGClient.load(
+        {
+            CONF_AUTH_TOKEN: entry.data[CONF_AUTH_TOKEN],
+        },
+        session,
+    )
+    if await client.verify_login():
+        await client.logout(entry.data[CONF_LOGIN_TYPE])
+        _LOGGER.info("CSG account %s logged out", entry.data[CONF_USERNAME])

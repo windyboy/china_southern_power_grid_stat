@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import socket
 import time
 import traceback
 from datetime import timedelta
@@ -20,6 +21,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_USERNAME, STATE_UNAVAILABLE, UnitOfEnergy
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
@@ -74,6 +76,7 @@ from .csg_client import (
     CSGAPIError,
     CSGClient,
     CSGElectricityAccount,
+    CSGTransportError,
     NotLoggedIn,
 )
 
@@ -370,21 +373,19 @@ class CSGCoordinator(DataUpdateCoordinator):
         It cannot re-login if the session is invalidated.
         """
         _LOGGER.debug("Refreshing client")
-        self._client = await self.hass.async_add_executor_job(
-            CSGClient.load,
+        self._client = CSGClient.load(
             {
                 CONF_AUTH_TOKEN: self._config[CONF_AUTH_TOKEN],
             },
+            async_get_clientsession(self.hass, family=socket.AF_INET),
         )
-        logged_in = await self.hass.async_add_executor_job(
-            self._client.verify_login,
-        )
+        logged_in = await self._client.verify_login()
         if not logged_in:
             _LOGGER.warning(f"{self._config[CONF_USERNAME]}: Login expired")
             raise ConfigEntryAuthFailed("Login expired")
 
         _LOGGER.debug(f"{self._config[CONF_USERNAME]}: Session still valid")
-        await self.hass.async_add_executor_job(self._client.initialize)
+        await self._client.initialize()
 
     async def _async_fetch(self, func: callable, *args, **kwargs) -> (bool, tuple):
         """Wrapper to fetch data from API. Return (success, result) with timeout.
@@ -392,9 +393,7 @@ class CSGCoordinator(DataUpdateCoordinator):
         """
         try:
             async with async_timeout.timeout(SETTING_UPDATE_TIMEOUT):
-                return True, await self.hass.async_add_executor_job(
-                    func, *args, **kwargs
-                )
+                return True, await func(*args, **kwargs)
 
         except asyncio.TimeoutError as err:
             _LOGGER.error("Timeout fetching data in function: %s", func.__name__)
@@ -402,6 +401,13 @@ class CSGCoordinator(DataUpdateCoordinator):
         except NotLoggedIn as err:
             _LOGGER.error(
                 "Session invalidated unexpectedly in function: %s", func.__name__
+            )
+            return False, (func.__name__, err)
+        except CSGTransportError as err:
+            _LOGGER.error(
+                "Transport error fetching data in function %s: %s",
+                func.__name__,
+                err,
             )
             return False, (func.__name__, err)
         except CSGAPIError as err:

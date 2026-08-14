@@ -37,7 +37,10 @@
 
 使用[HACS](https://hacs.xyz/)或[手动下载安装](https://github.com/CubicPill/china_southern_power_grid_stat/releases)
 
-注意：本集成需求`Home Assistant`最低版本为`2022.11`。
+注意：本集成要求 `Home Assistant` 最低版本为 `2023.11`。
+
+南网接口客户端使用 Home Assistant 管理的异步 HTTP 会话，并仅解析、连接 IPv4。
+这可以避免运行环境能解析 AAAA、但 IPv6 实际不可达时阻塞更新。
 
 ### 配置界面
 
@@ -134,7 +137,8 @@
 
 本项目代码中的[`csg_client/__init__.py`](https://github.com/CubicPill/china_southern_power_grid_stat/blob/master/custom_components/china_southern_power_grid_stat/csg_client/__init__.py)
 是对南网在线 App API 的实现，可以独立于此项目单独使用。
-详细使用方法见`csg_client_demo.py`
+客户端基于 `aiohttp`，所有网络方法均需使用 `await` 调用。详细使用方法见
+`csg_client_demo.py`。
 
 ## Thank you
 - [lyylyylyylyy](https://github.com/lyylyylyylyy): PR [#30](https://github.com/CubicPill/china_southern_power_grid_stat/pull/30) 短信验证码登录支持
@@ -147,7 +151,6 @@
 - [【抄作业】电费插件(NR流)-南网](https://bbs.hassbian.com/thread-18122-1-1.html)
 
 自定义集成教程参考：[Building a Home Assistant Custom Component Part 1: Project Structure and Basics](https://aarongodfrey.dev/home%20automation/building_a_home_assistant_custom_component_part_1/)
-
 
 
 
