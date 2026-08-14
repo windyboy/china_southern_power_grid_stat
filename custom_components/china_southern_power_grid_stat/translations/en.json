@@ -93,8 +93,8 @@
   "selector": {
     "ip_family": {
       "options": {
-        "ipv4": "IPv4 only",
         "auto": "Automatic IPv4/IPv6 (default, recommended)",
+        "ipv4": "IPv4 only",
         "ipv6": "IPv6 only (advanced)"
       }
     }

@@ -93,8 +93,8 @@
   "selector": {
     "ip_family": {
       "options": {
-        "ipv4": "仅 IPv4",
         "auto": "自动选择 IPv4/IPv6（默认、推荐）",
+        "ipv4": "仅 IPv4",
         "ipv6": "仅 IPv6（高级）"
       }
     }
