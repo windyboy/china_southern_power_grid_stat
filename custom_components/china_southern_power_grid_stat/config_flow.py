@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import copy
 import logging
-import socket
 import time
 from typing import Any
 
@@ -20,9 +19,13 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers import translation
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers import selector, translation
 
+from .config import (
+    async_get_csg_clientsession,
+    get_configured_ip_family,
+    get_configured_update_interval,
+)
 from .const import (
     ABORT_ALL_ADDED,
     ABORT_NO_ACCOUNT,
@@ -31,6 +34,7 @@ from .const import (
     CONF_AUTH_TOKEN,
     CONF_ELE_ACCOUNTS,
     CONF_GENERAL_ERROR,
+    CONF_IP_FAMILY,
     CONF_LOGIN_TYPE,
     CONF_REFRESH_QR_CODE,
     CONF_SETTINGS,
@@ -43,6 +47,7 @@ from .const import (
     ERROR_INVALID_AUTH,
     ERROR_QR_NOT_SCANNED,
     ERROR_UNKNOWN,
+    IP_FAMILY_OPTIONS,
     LOGIN_TYPE_TO_QR_APP_NAME,
     STEP_ADD_ACCOUNT,
     STEP_ALI_QR_LOGIN,
@@ -80,7 +85,7 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: config_entries.ConfigEntry,
     ) -> config_entries.OptionsFlow:
         """Create the options flow."""
-        return CSGOptionsFlowHandler()
+        return CSGOptionsFlowHandler(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -177,9 +182,7 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
             }
         )
-        client = CSGClient(
-            async_get_clientsession(self.hass, family=socket.AF_INET)
-        )
+        client = CSGClient(async_get_csg_clientsession(self.hass, self._reauth_entry))
         username = self.context["user_data"][CONF_USERNAME]
 
         if user_input is None:
@@ -275,9 +278,7 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle QR code login step."""
-        client = CSGClient(
-            async_get_clientsession(self.hass, family=socket.AF_INET)
-        )
+        client = CSGClient(async_get_csg_clientsession(self.hass, self._reauth_entry))
         if user_input is None:
             # create QR code
             login_type = self.context["user_data"][CONF_LOGIN_TYPE]
@@ -304,9 +305,7 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Get QR scan status after user has scanned the code"""
-        client = CSGClient(
-            async_get_clientsession(self.hass, family=socket.AF_INET)
-        )
+        client = CSGClient(async_get_csg_clientsession(self.hass, self._reauth_entry))
         login_type = self.context["user_data"][CONF_LOGIN_TYPE]
         login_id = self.context["user_data"]["login_id"]
         ok, auth_token = await client.api_get_qr_login_status(login_id)
@@ -397,10 +396,16 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class CSGOptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow for China Southern Power Grid Statistics."""
 
-    def __init__(self) -> None:
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
         super().__init__()
+        self._config_entry = config_entry
         self.all_electricity_accounts: list[CSGElectricityAccount] = []
+
+    @property
+    def config_entry(self) -> config_entries.ConfigEntry:
+        """Return the config entry on all supported Home Assistant versions."""
+        return self._config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -459,7 +464,7 @@ class CSGOptionsFlowHandler(config_entries.OptionsFlow):
                     )
                     return self.async_create_entry(
                         title="",
-                        data={},
+                        data=dict(self.config_entry.options),
                     )
         # end of handling add account
 
@@ -468,7 +473,7 @@ class CSGOptionsFlowHandler(config_entries.OptionsFlow):
             {
                 CONF_AUTH_TOKEN: self.config_entry.data[CONF_AUTH_TOKEN],
             },
-            async_get_clientsession(self.hass, family=socket.AF_INET),
+            async_get_csg_clientsession(self.hass, self.config_entry),
         )
         logged_in = await client.verify_login()
         if not logged_in:
@@ -512,25 +517,26 @@ class CSGOptionsFlowHandler(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Settings of parameters"""
-        update_interval = self.config_entry.data[CONF_SETTINGS][CONF_UPDATE_INTERVAL]
+        update_interval = get_configured_update_interval(self.config_entry)
+        ip_family = get_configured_ip_family(self.config_entry)
         schema = vol.Schema(
             {
                 vol.Required(CONF_UPDATE_INTERVAL, default=update_interval): vol.All(
                     int, vol.Range(min=60), msg="刷新间隔不能低于60秒"
+                ),
+                vol.Required(CONF_IP_FAMILY, default=ip_family): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=list(IP_FAMILY_OPTIONS),
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                        translation_key=CONF_IP_FAMILY,
+                    )
                 ),
             }
         )
         if user_input is None:
             return self.async_show_form(step_id=STEP_SETTINGS, data_schema=schema)
 
-        new_data = self.config_entry.data.copy()
-        new_data[CONF_SETTINGS][CONF_UPDATE_INTERVAL] = user_input[CONF_UPDATE_INTERVAL]
-        new_data[CONF_UPDATED_AT] = str(int(time.time() * 1000))
-        self.hass.config_entries.async_update_entry(
-            self.config_entry,
-            data=new_data,
-        )
-        return self.async_create_entry(
-            title="",
-            data={},
-        )
+        new_options = dict(self.config_entry.options)
+        new_options[CONF_UPDATE_INTERVAL] = user_input[CONF_UPDATE_INTERVAL]
+        new_options[CONF_IP_FAMILY] = user_input[CONF_IP_FAMILY]
+        return self.async_create_entry(title="", data=new_options)

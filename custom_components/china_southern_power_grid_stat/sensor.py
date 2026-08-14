@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
-import socket
 import time
 import traceback
 from datetime import timedelta
@@ -21,7 +20,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_USERNAME, STATE_UNAVAILABLE, UnitOfEnergy
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
@@ -30,6 +28,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from . import CONF_UPDATED_AT
+from .config import async_get_csg_clientsession, get_configured_update_interval
 from .const import (
     ATTR_KEY_CURRENT_LADDER_START_DATE,
     ATTR_KEY_LAST_MONTH_BY_DAY,
@@ -39,8 +38,6 @@ from .const import (
     ATTR_KEY_THIS_YEAR_BY_MONTH,
     CONF_AUTH_TOKEN,
     CONF_ELE_ACCOUNTS,
-    CONF_SETTINGS,
-    CONF_UPDATE_INTERVAL,
     DATA_KEY_LAST_UPDATE_DAY,
     DOMAIN,
     SETTING_LAST_MONTH_UPDATE_DAY_THRESHOLD,
@@ -347,6 +344,7 @@ class CSGCoordinator(DataUpdateCoordinator):
         if config_entry is None:
             raise ValueError(f"Config entry {self._config_entry_id} not found")
         self._config = config_entry.data
+        self._config_entry = config_entry
         super().__init__(
             hass,
             _LOGGER,
@@ -354,7 +352,7 @@ class CSGCoordinator(DataUpdateCoordinator):
             name=f"CSG Account {self._config[CONF_USERNAME]}",
             # Polling interval. Will only be polled if there are subscribers.
             update_interval=timedelta(
-                seconds=self._config[CONF_SETTINGS][CONF_UPDATE_INTERVAL]
+                seconds=get_configured_update_interval(config_entry)
             ),
         )
         self._client: CSGClient | None = None
@@ -377,7 +375,7 @@ class CSGCoordinator(DataUpdateCoordinator):
             {
                 CONF_AUTH_TOKEN: self._config[CONF_AUTH_TOKEN],
             },
-            async_get_clientsession(self.hass, family=socket.AF_INET),
+            async_get_csg_clientsession(self.hass, self._config_entry),
         )
         logged_in = await self._client.verify_login()
         if not logged_in:
@@ -964,7 +962,7 @@ class CSGCoordinator(DataUpdateCoordinator):
         self._this_month_update_completed_flag.clear()
 
         self.update_interval = timedelta(
-            seconds=self._config[CONF_SETTINGS][CONF_UPDATE_INTERVAL]
+            seconds=get_configured_update_interval(self._config_entry)
         )
         self._update_states()
         # _LOGGER.debug("Coordinator update interval: %d", self.update_interval.seconds)

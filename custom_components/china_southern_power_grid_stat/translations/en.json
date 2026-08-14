@@ -75,9 +75,20 @@
             },
             "settings": {
                 "data": {
+                    "ip_family": "Network protocol",
                     "update_interval": "\u66f4\u65b0\u95f4\u9694\uff08\u79d2\uff09"
                 },
+                "description": "IPv4 only is the default. Auto allows IPv4 and IPv6 and may be delayed when IPv6 resolves but is unreachable. IPv6 only never falls back to IPv4.",
                 "title": "\u53c2\u6570\u8bbe\u7f6e"
+            }
+        }
+    },
+    "selector": {
+        "ip_family": {
+            "options": {
+                "auto": "Automatic IPv4/IPv6",
+                "ipv4": "IPv4 only (default, recommended)",
+                "ipv6": "IPv6 only (advanced)"
             }
         }
     }

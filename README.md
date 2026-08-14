@@ -39,8 +39,10 @@
 
 注意：本集成要求 `Home Assistant` 最低版本为 `2023.11`。
 
-南网接口客户端使用 Home Assistant 管理的异步 HTTP 会话，并仅解析、连接 IPv4。
-这可以避免运行环境能解析 AAAA、但 IPv6 实际不可达时阻塞更新。
+南网接口客户端使用 Home Assistant 管理的异步 HTTP 会话。默认仅解析、连接 IPv4，
+这可以避免运行环境能解析 AAAA、但 IPv6 实际不可达时阻塞更新。可在集成的“参数设置”中
+改为自动选择 IPv4/IPv6 或仅 IPv6；自动模式在 IPv6 不可达的环境中可能产生连接延迟，
+仅 IPv6 模式不会回退 IPv4。
 
 ### 配置界面
 
@@ -151,7 +153,6 @@
 - [【抄作业】电费插件(NR流)-南网](https://bbs.hassbian.com/thread-18122-1-1.html)
 
 自定义集成教程参考：[Building a Home Assistant Custom Component Part 1: Project Structure and Basics](https://aarongodfrey.dev/home%20automation/building_a_home_assistant_custom_component_part_1/)
-
 
 
 

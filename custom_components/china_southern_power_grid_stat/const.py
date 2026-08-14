@@ -14,6 +14,7 @@ CONF_AUTH_TOKEN = "auth_token"
 # electricity accounts
 CONF_ELE_ACCOUNTS = "accounts"
 CONF_UPDATE_INTERVAL = "update_interval"
+CONF_IP_FAMILY = "ip_family"
 CONF_SETTINGS = "settings"
 CONF_UPDATED_AT = "updated_at"
 CONF_ACTION = "action"
@@ -92,3 +93,9 @@ SETTING_LAST_YEAR_UPDATE_DAY_THRESHOLD = 7
 
 # defaults (unit: seconds)
 DEFAULT_UPDATE_INTERVAL = int(timedelta(hours=4).total_seconds())
+
+IP_FAMILY_IPV4 = "ipv4"
+IP_FAMILY_AUTO = "auto"
+IP_FAMILY_IPV6 = "ipv6"
+IP_FAMILY_OPTIONS = (IP_FAMILY_IPV4, IP_FAMILY_AUTO, IP_FAMILY_IPV6)
+DEFAULT_IP_FAMILY = IP_FAMILY_IPV4
