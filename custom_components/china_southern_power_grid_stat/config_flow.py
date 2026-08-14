@@ -17,8 +17,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import FlowResult
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.data_entry_flow import AbortFlow, FlowResult
 from homeassistant.helpers import selector, translation
 
 from .config import (
@@ -47,6 +46,7 @@ from .const import (
     DOMAIN,
     ERROR_CANNOT_CONNECT,
     ERROR_INVALID_AUTH,
+    ERROR_QR_EXPIRED,
     ERROR_QR_NOT_SCANNED,
     ERROR_UNKNOWN,
     IP_FAMILY_OPTIONS,
@@ -66,11 +66,13 @@ from .const import (
 )
 from .csg_client import (
     LOGIN_TYPE_TO_QR_CODE_TYPE,
+    CSGAPIError,
     CSGClient,
     CSGElectricityAccount,
     CSGTransportError,
     InvalidCredentials,
     LoginType,
+    QrCodeExpired,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -158,10 +160,14 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is None:
             # initial step, need phone number to send SMS code
             trans = await translation.async_get_translations(
-                self.hass, DOMAIN, self.hass.config.language
+                self.hass,
+                self.hass.config.language,
+                "config",
+                {DOMAIN},
             )
             msg_username = trans.get(
-                "config.step.sms_login.data.username_invalid", "请输入11位手机号"
+                f"component.{DOMAIN}.config.step.sms_login.data.username_invalid",
+                "请输入11位手机号",
             )
             return self.async_show_form(
                 step_id=STEP_SMS_LOGIN,
@@ -184,13 +190,18 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle SMS and password login step."""
         if user_input is None:
             trans = await translation.async_get_translations(
-                self.hass, DOMAIN, self.hass.config.language
+                self.hass,
+                self.hass.config.language,
+                "config",
+                {DOMAIN},
             )
             msg_username = trans.get(
-                "config.step.sms_pwd_login.data.username_invalid", "请输入11位手机号"
+                f"component.{DOMAIN}.config.step.sms_pwd_login.data.username_invalid",
+                "请输入11位手机号",
             )
             msg_password = trans.get(
-                "config.step.sms_pwd_login.data.password_invalid", "请输入8-16位登陆密码"
+                f"component.{DOMAIN}.config.step.sms_pwd_login.data.password_invalid",
+                "请输入8-16位登陆密码",
             )
             return self.async_show_form(
                 step_id=STEP_SMS_PWD_LOGIN,
@@ -215,10 +226,14 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle SMS code validation step, for both SMS and SMS+password login."""
         trans = await translation.async_get_translations(
-            self.hass, DOMAIN, self.hass.config.language
+            self.hass,
+            self.hass.config.language,
+            "config",
+            {DOMAIN},
         )
         msg_code = trans.get(
-            "config.step.validate_sms_code.data.code_invalid", "请输入6位短信验证码"
+            f"component.{DOMAIN}.config.step.validate_sms_code.data.sms_code_invalid",
+            "请输入6位短信验证码",
         )
         schema = vol.Schema(
             {
@@ -350,6 +365,8 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         login_type = self.context["user_data"][CONF_LOGIN_TYPE]
         if user_input is None:
             # create QR code
+            self.context["user_data"].pop("login_id", None)
+            self.context["user_data"].pop("image_link", None)
             errors: dict[str, str] = {}
             try:
                 login_id, image_link = await client.api_create_login_qr_code(
@@ -368,6 +385,8 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self._show_qr_form(login_type, errors=errors)
         if user_input[CONF_REFRESH_QR_CODE]:
             return await self.async_step_qr_login()
+        if "login_id" not in self.context["user_data"]:
+            return await self.async_step_qr_login()
         return await self.async_step_validate_qr_login()
 
     async def async_step_validate_qr_login(
@@ -379,6 +398,12 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         login_id = self.context["user_data"]["login_id"]
         try:
             ok, auth_token = await client.api_get_qr_login_status(login_id)
+        except QrCodeExpired:
+            self.context["user_data"].pop("login_id", None)
+            self.context["user_data"].pop("image_link", None)
+            return self._show_qr_form(
+                login_type, errors={CONF_GENERAL_ERROR: ERROR_QR_EXPIRED}
+            )
         except CSGTransportError:
             return self._show_qr_form(
                 login_type, errors={CONF_GENERAL_ERROR: ERROR_CANNOT_CONNECT}
@@ -404,6 +429,11 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self._show_qr_form(
                     login_type, errors={CONF_GENERAL_ERROR: ERROR_UNKNOWN}
                 )
+            if not isinstance(user_info, dict) or not user_info.get("mobile"):
+                _LOGGER.error("QR login response did not include a mobile number")
+                return self._show_qr_form(
+                    login_type, errors={CONF_GENERAL_ERROR: ERROR_UNKNOWN}
+                )
             username = user_info["mobile"]
             await self.check_and_set_unique_id(username)
             return await self.create_or_update_config_entry(
@@ -420,6 +450,10 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # TODO: username (mobile) may not be the best unique id
         unique_id = f"CSG-{username}"
         await self.async_set_unique_id(unique_id)
+        if self._reauth_entry is not None:
+            if self._reauth_entry.unique_id != unique_id:
+                raise AbortFlow("unique_id_mismatch")
+            return
         self._abort_if_unique_id_configured()
 
     async def create_or_update_config_entry(
@@ -450,7 +484,8 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self.hass.config_entries.async_update_entry(
                 self._reauth_entry, data=data, options=new_options
             )
-            await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
+            if not getattr(self._reauth_entry, "update_listeners", ()):
+                await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
             self._reauth_entry = None
             return self.async_abort(reason="reauth_successful")
         # normal creation
@@ -531,7 +566,7 @@ class CSGOptionsFlowHandler(config_entries.OptionsFlow):
             for account in self.all_electricity_accounts:
                 if account.account_number == account_num_to_add:
                     # store the account config in main entry instead of creating new entries
-                    new_data = self.config_entry.data.copy()
+                    new_data = copy.deepcopy(self.config_entry.data)
                     new_data[CONF_ELE_ACCOUNTS][account_num_to_add] = account.dump()
                     # this must be set or update won't be detected
                     new_data[CONF_UPDATED_AT] = str(int(time.time() * 1000))
@@ -543,10 +578,6 @@ class CSGOptionsFlowHandler(config_entries.OptionsFlow):
                         "Added ele account to %s: %s",
                         self.config_entry.data[CONF_USERNAME],
                         account_num_to_add,
-                    )
-                    _LOGGER.info("Reloading entry because of new added account")
-                    await self.hass.config_entries.async_reload(
-                        self.config_entry.entry_id
                     )
                     return self.async_create_entry(
                         title="",
@@ -561,13 +592,25 @@ class CSGOptionsFlowHandler(config_entries.OptionsFlow):
             },
             async_get_csg_clientsession(self.hass, self.config_entry),
         )
-        logged_in = await client.verify_login()
-        if not logged_in:
-            # token expired
-            raise ConfigEntryAuthFailed("Login expired")
-        await client.initialize()
-
-        accounts = await client.get_all_electricity_accounts()
+        try:
+            logged_in = await client.verify_login()
+            if not logged_in:
+                self.config_entry.async_start_reauth(self.hass)
+                return self.async_abort(reason="reauth_required")
+            await client.initialize()
+            accounts = await client.get_all_electricity_accounts()
+        except CSGTransportError:
+            return self.async_show_form(
+                step_id=STEP_ADD_ACCOUNT,
+                data_schema=vol.Schema({}),
+                errors={CONF_GENERAL_ERROR: ERROR_CANNOT_CONNECT},
+            )
+        except CSGAPIError:
+            return self.async_show_form(
+                step_id=STEP_ADD_ACCOUNT,
+                data_schema=vol.Schema({}),
+                errors={CONF_GENERAL_ERROR: ERROR_UNKNOWN},
+            )
         self.all_electricity_accounts = accounts
         if not accounts:
             _LOGGER.warning(

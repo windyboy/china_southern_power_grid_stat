@@ -8,6 +8,7 @@ import sys
 import time
 from collections import namedtuple
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import aiohttp
 import pytest
@@ -23,9 +24,18 @@ sys.path.insert(
 )
 
 from csg_client import (  # noqa: E402
+    CSGAPIError,
     CSGClient,
+    CSGElectricityAccount,
     CSGHTTPError,
     CSGTransportError,
+    QrCodeExpired,
+    decrypt_params,
+    encrypt_params,
+)
+from csg_client.const import (  # noqa: E402
+    RESP_STA_NO_METERING_POINT,
+    RESP_STA_QR_TIMEOUT,
 )
 
 
@@ -203,6 +213,134 @@ def test_load_reuses_injected_session():
 
     assert client._session is session
     assert client.auth_token == "token"
+
+
+def test_aes_round_trip_supports_multibyte_unicode():
+    payload = {"name": "南方电网⚡", "nested": {"city": "广州"}}
+
+    assert decrypt_params(encrypt_params(payload)) == payload
+
+
+@pytest.mark.asyncio
+async def test_qr_timeout_is_reported_as_expired():
+    session = FakeSession(FakeResponse(data={"sta": RESP_STA_QR_TIMEOUT}))
+    client = CSGClient(session)
+
+    with pytest.raises(QrCodeExpired):
+        await client.api_get_qr_login_status("login-id")
+
+
+@pytest.mark.asyncio
+async def test_qr_creation_requires_an_image_url():
+    session = FakeSession(FakeResponse(data={"sta": "00", "data": None}))
+    client = CSGClient(session)
+
+    with pytest.raises(CSGAPIError, match="INVALID_RESPONSE"):
+        await client.api_create_login_qr_code("csg")
+
+
+@pytest.mark.asyncio
+async def test_account_enumeration_skips_only_missing_metering_point():
+    client = CSGClient(FakeSession())
+    linked = [
+        {
+            "areaCode": "030000",
+            "bindingId": "missing",
+            "eleCustNumber": "account-1",
+            "eleAddress": "address-1",
+            "userName": "user-1",
+        },
+        {
+            "areaCode": "040000",
+            "bindingId": "present",
+            "eleCustNumber": "account-2",
+            "eleAddress": "address-2",
+            "userName": "user-2",
+        },
+    ]
+    client.api_get_all_linked_electricity_accounts = AsyncMock(return_value=linked)
+    client.api_get_metering_point = AsyncMock(
+        side_effect=[
+            CSGAPIError(RESP_STA_NO_METERING_POINT),
+            [{"meteringPointId": "id-2", "meteringPointNumber": "number-2"}],
+        ]
+    )
+
+    accounts = await client.get_all_electricity_accounts()
+
+    assert [account.account_number for account in accounts] == ["account-2"]
+    assert client.api_get_metering_point.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_account_enumeration_propagates_unexpected_api_error():
+    client = CSGClient(FakeSession())
+    client.api_get_all_linked_electricity_accounts = AsyncMock(
+        return_value=[
+            {
+                "areaCode": "03",
+                "bindingId": "binding",
+                "eleCustNumber": "account",
+                "eleAddress": "address",
+                "userName": "user",
+            }
+        ]
+    )
+    client.api_get_metering_point = AsyncMock(
+        side_effect=CSGAPIError("UNEXPECTED")
+    )
+
+    with pytest.raises(CSGAPIError, match="UNEXPECTED"):
+        await client.get_all_electricity_accounts()
+
+
+@pytest.mark.asyncio
+async def test_account_enumeration_skips_malformed_success_rows():
+    client = CSGClient(FakeSession())
+    client.api_get_all_linked_electricity_accounts = AsyncMock(
+        return_value=[
+            {"areaCode": "03"},
+            {
+                "areaCode": "03",
+                "bindingId": "binding",
+                "eleCustNumber": "account",
+                "eleAddress": "address",
+                "userName": "user",
+            },
+        ]
+    )
+    client.api_get_metering_point = AsyncMock(return_value=[{}])
+
+    assert await client.get_all_electricity_accounts() == []
+    client.api_get_metering_point.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_nullable_usage_responses_return_safe_empty_values():
+    client = CSGClient(FakeSession())
+    account = CSGElectricityAccount(
+        area_code="03", ele_customer_id="binding", metering_point_id="meter"
+    )
+    client.api_query_day_electric_by_m_point = AsyncMock(return_value=None)
+    client.api_query_account_surplus = AsyncMock(return_value=None)
+    client.api_get_fee_analyze_details = AsyncMock(return_value={})
+
+    assert await client.get_month_daily_usage_detail(account, (2026, 8)) == (0.0, [])
+    assert await client.get_balance_and_arrears(account) == (0.0, 0.0)
+    assert await client.get_year_month_stats(account, 2026) == (0.0, 0.0, [])
+
+
+def test_unsuccessful_response_log_omits_payload_and_customer(caplog):
+    client = CSGClient(FakeSession())
+    client.customer_number = "secret-customer"
+
+    with caplog.at_level("DEBUG"), pytest.raises(CSGAPIError):
+        client._handle_unsuccessful_response(
+            "probe", {"sta": "ERROR", "data": "secret-payload"}
+        )
+
+    assert "secret-customer" not in caplog.text
+    assert "secret-payload" not in caplog.text
 
 
 @pytest.mark.asyncio

@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import datetime
 import logging
 import time
-import traceback
 from datetime import timedelta
 from typing import Any
 
-import async_timeout
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -20,6 +19,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_USERNAME, STATE_UNAVAILABLE, UnitOfEnergy
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
@@ -90,9 +90,20 @@ async def async_setup_entry(
         _LOGGER.info("No ele accounts in config, exit entry setup")
         return
     coordinator = CSGCoordinator(hass, config_entry.entry_id)
+    device_reg = dr.async_get(hass)
 
     all_sensors = []
-    for ele_account_number, _ in config_entry.data[CONF_ELE_ACCOUNTS].items():
+    for ele_account_number in config_entry.data[CONF_ELE_ACCOUNTS]:
+        legacy_identifier = (DOMAIN, ele_account_number)
+        scoped_identifier = (
+            DOMAIN,
+            f"{config_entry.entry_id}:{ele_account_number}",
+        )
+        legacy_device = device_reg.async_get_device(identifiers={legacy_identifier})
+        if legacy_device is not None and scoped_identifier not in legacy_device.identifiers:
+            device_reg.async_update_device(
+                legacy_device.id, new_identifiers={scoped_identifier}
+            )
         sensors = [
             # balance
             CSGCostSensor(coordinator, ele_account_number, SUFFIX_BAL),
@@ -192,7 +203,9 @@ async def async_setup_entry(
         all_sensors.extend(sensors)
 
     async_add_entities(all_sensors)
-    _LOGGER.debug(f"created {len(all_sensors)} sensors for config {config_entry.title}")
+    _LOGGER.debug(
+        "Created %s sensors for config %s", len(all_sensors), config_entry.title
+    )
     # Schedule the first update to run in the background
     config_entry.async_create_task(
         hass,
@@ -242,7 +255,12 @@ class CSGBaseSensor(
     def device_info(self) -> DeviceInfo:
         """Return the device info."""
         return DeviceInfo(
-            identifiers={(DOMAIN, self._account_number)},
+            identifiers={
+                (
+                    DOMAIN,
+                    f"{self._config_entry_id}:{self._account_number}",
+                )
+            },
             name=f"CSGAccount-{self._account_number}",
             manufacturer="CSG",
             model="CSG Virtual Electricity Meter",
@@ -315,8 +333,27 @@ class CSGEnergySensor(CSGBaseSensor):
 
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_device_class = SensorDeviceClass.ENERGY
-    _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:lightning-bolt"
+
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator,
+        account_number: str,
+        entity_suffix: str,
+        extra_state_attributes_key: str | None = None,
+    ) -> None:
+        super().__init__(
+            coordinator,
+            account_number,
+            entity_suffix,
+            extra_state_attributes_key,
+        )
+        self._attr_state_class = None
+        if entity_suffix in (SUFFIX_THIS_MONTH_KWH, SUFFIX_THIS_YEAR_KWH):
+            self._attr_state_class = SensorStateClass.TOTAL_INCREASING
+        elif entity_suffix == SUFFIX_CURRENT_LADDER_REMAINING_KWH:
+            self._attr_device_class = SensorDeviceClass.ENERGY_STORAGE
+            self._attr_state_class = SensorStateClass.MEASUREMENT
 
 
 class CSGCostSensor(CSGBaseSensor):
@@ -324,8 +361,27 @@ class CSGCostSensor(CSGBaseSensor):
 
     _attr_native_unit_of_measurement = "CNY"
     _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:currency-cny"
+
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator,
+        account_number: str,
+        entity_suffix: str,
+        extra_state_attributes_key: str | None = None,
+    ) -> None:
+        super().__init__(
+            coordinator,
+            account_number,
+            entity_suffix,
+            extra_state_attributes_key,
+        )
+        self._attr_state_class = None
+        if entity_suffix in (SUFFIX_THIS_MONTH_COST, SUFFIX_THIS_YEAR_COST):
+            self._attr_state_class = SensorStateClass.TOTAL_INCREASING
+        elif entity_suffix == SUFFIX_CURRENT_LADDER_TARIFF:
+            self._attr_device_class = None
+            self._attr_native_unit_of_measurement = "CNY/kWh"
 
 
 class CSGLadderStageSensor(CSGBaseSensor):
@@ -363,7 +419,6 @@ class CSGCoordinator(DataUpdateCoordinator):
         self._this_month_ym = None
         self._last_year = None
         self._last_month_ym = None
-        self._this_month_update_completed_flag = asyncio.Event()
         self._gathered_data = {}
 
     async def _async_refresh_client(self):
@@ -379,10 +434,10 @@ class CSGCoordinator(DataUpdateCoordinator):
         )
         logged_in = await self._client.verify_login()
         if not logged_in:
-            _LOGGER.warning(f"{self._config[CONF_USERNAME]}: Login expired")
+            _LOGGER.warning("%s: Login expired", self._config[CONF_USERNAME])
             raise ConfigEntryAuthFailed("Login expired")
 
-        _LOGGER.debug(f"{self._config[CONF_USERNAME]}: Session still valid")
+        _LOGGER.debug("%s: Session still valid", self._config[CONF_USERNAME])
         await self._client.initialize()
 
     async def _async_fetch(self, func: callable, *args, **kwargs) -> (bool, tuple):
@@ -390,7 +445,7 @@ class CSGCoordinator(DataUpdateCoordinator):
         Also handle all exceptions here to avoid task group being cancelled.
         """
         try:
-            async with async_timeout.timeout(SETTING_UPDATE_TIMEOUT):
+            async with asyncio.timeout(SETTING_UPDATE_TIMEOUT):
                 return True, await func(*args, **kwargs)
 
         except asyncio.TimeoutError as err:
@@ -416,8 +471,7 @@ class CSGCoordinator(DataUpdateCoordinator):
             )
             return False, (func.__name__, err)
         except Exception as err:  # pylint: disable=broad-except
-            _LOGGER.error("Unexpected exception: %s", err)
-            _LOGGER.error(traceback.format_exc())
+            _LOGGER.exception("Unexpected exception in %s", func.__name__)
             return False, (func.__name__, err)
 
     async def _async_update_bal_arr(self, account: CSGElectricityAccount):
@@ -704,32 +758,23 @@ class CSGCoordinator(DataUpdateCoordinator):
             ATTR_KEY_CURRENT_LADDER_START_DATE
         ] = {ATTR_KEY_CURRENT_LADDER_START_DATE: ladder_start_date}
 
-        self._this_month_update_completed_flag.set()
-
     async def _async_update_last_month_stats(self, account: CSGElectricityAccount):
         """Update last month's usage and cost"""
         if not self._if_update_last_month:
-            # original condition, don't need to update last month's data
-
-            # wait for this month's data to be updated to see if last month's data is needed
-            await self._this_month_update_completed_flag.wait()
-
-            if not self._if_update_last_month:
-                # don't need last month's data for latest day
-                _LOGGER.debug(
-                    "Last month's data for account %s: no need to update",
-                    account.account_number,
-                )
-                self._gathered_data[account.account_number][
-                    SUFFIX_LAST_MONTH_KWH
-                ] = STATE_UPDATE_UNCHANGED
-                self._gathered_data[account.account_number][
-                    SUFFIX_LAST_MONTH_COST
-                ] = STATE_UPDATE_UNCHANGED
-                self._gathered_data[account.account_number][
-                    ATTR_KEY_LAST_MONTH_BY_DAY
-                ] = {ATTR_KEY_LAST_MONTH_BY_DAY: STATE_UPDATE_UNCHANGED}
-                return
+            _LOGGER.debug(
+                "Last month's data for account %s: no need to update",
+                account.account_number,
+            )
+            self._gathered_data[account.account_number][
+                SUFFIX_LAST_MONTH_KWH
+            ] = STATE_UPDATE_UNCHANGED
+            self._gathered_data[account.account_number][
+                SUFFIX_LAST_MONTH_COST
+            ] = STATE_UPDATE_UNCHANGED
+            self._gathered_data[account.account_number][
+                ATTR_KEY_LAST_MONTH_BY_DAY
+            ] = {ATTR_KEY_LAST_MONTH_BY_DAY: STATE_UPDATE_UNCHANGED}
+            return
 
         # continue to update last month's data
         # fetch usage and cost in parallel
@@ -928,15 +973,32 @@ class CSGCoordinator(DataUpdateCoordinator):
         #         self._async_update_this_month_stats_and_ladder(account)
         #     )
         #     task_group.create_task(self._async_update_last_month_stats(account))
-        await asyncio.gather(
+        results = await asyncio.gather(
             self._async_update_bal_arr(account),
             self._async_update_yesterday_kwh(account),
             self._async_update_this_year_stats(account),
             self._async_update_last_year_stats(account),
             self._async_update_this_month_stats_and_ladder(account),
-            self._async_update_last_month_stats(account),
             return_exceptions=True,
         )
+        for result in results:
+            if isinstance(result, BaseException):
+                _LOGGER.error(
+                    "Ele account %s update task failed: %s",
+                    account.account_number,
+                    result,
+                )
+        if isinstance(results[-1], BaseException):
+            self._if_update_last_month = True
+        last_month_result = await asyncio.gather(
+            self._async_update_last_month_stats(account), return_exceptions=True
+        )
+        if isinstance(last_month_result[0], BaseException):
+            _LOGGER.error(
+                "Ele account %s last-month update failed: %s",
+                account.account_number,
+                last_month_result[0],
+            )
         try:
             self._update_latest_day(account)
         except Exception as exc:  # pylint: disable=broad-except
@@ -958,9 +1020,6 @@ class CSGCoordinator(DataUpdateCoordinator):
         This is the place to pre-process the data to lookup tables
         so entities can quickly look up their data.
         """
-        # Reset the event flag for this update cycle
-        self._this_month_update_completed_flag.clear()
-
         self.update_interval = timedelta(
             seconds=get_configured_update_interval(self._config_entry)
         )
@@ -969,26 +1028,26 @@ class CSGCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Coordinator update started")
         start_time = time.time()
 
-        metering_point_data = {}
         config_entry_need_update = False
         await self._async_refresh_client()
-        new_config = self._config.copy()
+        new_config = copy.deepcopy(self._config)
         for account_number, account_data in self._config[CONF_ELE_ACCOUNTS].items():
             self._gathered_data[account_number] = {}
             account = CSGElectricityAccount.load(account_data)
             # handling the addition of metering point number
             if not account.metering_point_number:
-                if not metering_point_data:
-                    ok, data = await self._async_fetch(
-                        self._client.api_get_metering_point,
-                        account.area_code,
-                        account.ele_customer_id,
-                    )
-                    if ok:
-                        metering_point_data = data
-                if metering_point_data:
+                ok, metering_point_data = await self._async_fetch(
+                    self._client.api_get_metering_point,
+                    account.area_code,
+                    account.ele_customer_id,
+                )
+                if ok and isinstance(metering_point_data, list):
                     for mp in metering_point_data:
-                        if mp["eleCustNumber"] == account.account_number:
+                        if (
+                            isinstance(mp, dict)
+                            and mp.get("eleCustNumber") == account.account_number
+                            and mp.get(JSON_KEY_METERING_POINT_NUMBER)
+                        ):
                             config_entry_need_update = True
                             account.metering_point_number = mp[
                                 JSON_KEY_METERING_POINT_NUMBER

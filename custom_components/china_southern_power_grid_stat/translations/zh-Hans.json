@@ -2,12 +2,14 @@
   "config": {
     "abort": {
       "already_configured": "账号已添加，请勿重复添加",
-      "reauth_successful": "登录成功"
+      "reauth_successful": "登录成功",
+      "unique_id_mismatch": "重新登录的账号与原账号不一致"
     },
     "error": {
       "cannot_connect": "网络异常",
       "invalid_auth": "登录信息无效",
       "qr_not_scanned": "扫描二维码并确认登录",
+      "qr_expired": "二维码已过期，请刷新后重试",
       "unknown": "未知错误"
     },
     "step": {
@@ -51,8 +53,8 @@
         "title": "输入短信验证码",
         "description": "验证码已发送到: {phone_no}",
         "data": {
-          "code": "短信验证码",
-          "code_invalid": "请输入6位短信验证码"
+          "sms_code": "短信验证码",
+          "sms_code_invalid": "请输入6位短信验证码"
         }
       },
       "qr_login": {
@@ -71,7 +73,8 @@
   "options": {
     "abort": {
       "no_account": "账户未绑定缴费号",
-      "all_added": "没有可添加到此集成的缴费号"
+      "all_added": "没有可添加到此集成的缴费号",
+      "reauth_required": "登录已过期，已启动重新认证"
     },
     "step": {
       "init": {
