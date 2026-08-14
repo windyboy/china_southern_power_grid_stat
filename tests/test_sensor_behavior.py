@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
-from homeassistant.const import UnitOfEnergy
+from homeassistant.const import CONF_USERNAME, UnitOfEnergy
 
 from custom_components.china_southern_power_grid_stat.const import (
+    CONF_ELE_ACCOUNTS,
+    DATA_KEY_LAST_UPDATE_DAY,
     DOMAIN,
     SUFFIX_BAL,
     SUFFIX_CURRENT_LADDER_REMAINING_KWH,
@@ -106,3 +108,30 @@ async def test_this_month_failure_cannot_block_last_month_update():
 
     coordinator._async_update_last_month_stats.assert_awaited_once_with(account)
     assert coordinator._if_update_last_month is True
+
+
+@pytest.mark.asyncio
+async def test_update_data_deepcopies_mappingproxy_config():
+    """Coordinator update must deep-copy the read-only mappingproxy entry data."""
+    coordinator = object.__new__(CSGCoordinator)
+    coordinator._config_entry_id = "entry-id"
+    coordinator._config = MappingProxyType(
+        {CONF_USERNAME: "user", CONF_ELE_ACCOUNTS: {}}
+    )
+    coordinator._config_entry = SimpleNamespace(data={}, options={})
+    coordinator._gathered_data = {}
+    coordinator._this_day = None
+    coordinator._async_refresh_client = AsyncMock()
+
+    class FakeConfigEntries:
+        def async_get_entry(self, entry_id):
+            return None
+
+    coordinator.hass = SimpleNamespace(
+        data={DOMAIN: {"entry-id": {}}},
+        config_entries=FakeConfigEntries(),
+    )
+
+    result = await coordinator._async_update_data()
+
+    assert result == {}

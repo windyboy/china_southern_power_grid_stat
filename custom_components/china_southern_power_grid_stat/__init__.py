@@ -79,7 +79,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Optional: remove legacy password from stored config if present
     if CONF_PASSWORD in entry.data:
-        new_data = copy.deepcopy(entry.data)
+        new_data = copy.deepcopy(dict(entry.data))
         new_data.pop(CONF_PASSWORD, None)
         hass.config_entries.async_update_entry(entry, data=new_data)
 
@@ -138,7 +138,7 @@ async def async_remove_config_entry_device(
         entity_reg.async_remove(entity_id)
 
     # update config entry (only if account was in config)
-    new_data = copy.deepcopy(config_entry.data)
+    new_data = copy.deepcopy(dict(config_entry.data))
     if new_data[CONF_ELE_ACCOUNTS].pop(account_num, None) is None:
         _LOGGER.debug("Account %s was not in config, skip update", account_num)
         return True

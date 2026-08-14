@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import socket
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -46,10 +46,15 @@ from custom_components.china_southern_power_grid_stat.csg_client import (
 
 
 def make_entry(*, options=None, data=None, entry_id="entry-id"):
-    """Create the small config-entry shape required by these tests."""
+    """Create the small config-entry shape required by these tests.
+
+    Home Assistant exposes ``ConfigEntry.data`` and ``ConfigEntry.options`` as
+    read-only ``MappingProxyType``, so mirror that shape here to catch code that
+    mutates or deep-copies the entry mapping incorrectly.
+    """
     return SimpleNamespace(
-        options=options or {},
-        data=data or {},
+        options=MappingProxyType(dict(options or {})),
+        data=MappingProxyType(dict(data or {})),
         entry_id=entry_id,
     )
 
@@ -466,3 +471,44 @@ async def test_setup_entry_expired_login_raises_auth_failed(monkeypatch):
 
     with pytest.raises(ConfigEntryAuthFailed):
         await async_setup_entry(hass, entry)
+
+
+@pytest.mark.asyncio
+async def test_reauth_deepcopies_mappingproxy_entry_data():
+    """Reauth must deep-copy the read-only mappingproxy entry data."""
+    flow = object.__new__(CSGConfigFlow)
+    reauth_entry = make_entry(
+        options={CONF_IP_FAMILY: IP_FAMILY_IPV4},
+        data={
+            CONF_ELE_ACCOUNTS: {"account": {"id": 1}},
+            CONF_SETTINGS: {CONF_UPDATE_INTERVAL: 300},
+        },
+    )
+    reauth_entry.unique_id = "CSG-13800000000"
+    flow._reauth_entry = reauth_entry
+    flow.context = {"user_data": {CONF_IP_FAMILY: IP_FAMILY_IPV6}}
+
+    class FakeConfigEntries:
+        def __init__(self):
+            self.updates = []
+            self.reloads = []
+
+        def async_update_entry(self, entry, *, data, options):
+            self.updates.append((entry, data, options))
+
+        async def async_reload(self, entry_id):
+            self.reloads.append(entry_id)
+
+    config_entries = FakeConfigEntries()
+    flow.hass = SimpleNamespace(config_entries=config_entries)
+    flow.async_abort = lambda reason: {"reason": reason}
+
+    result = await flow.create_or_update_config_entry(
+        "token", LoginType.LOGIN_TYPE_SMS, "", "13800000000"
+    )
+
+    assert result == {"reason": "reauth_successful"}
+    assert config_entries.reloads == [reauth_entry.entry_id]
+    assert config_entries.updates[0][1][CONF_ELE_ACCOUNTS] == {"account": {"id": 1}}
+    assert config_entries.updates[0][1][CONF_SETTINGS] == {CONF_UPDATE_INTERVAL: 300}
+    assert config_entries.updates[0][2] == {CONF_IP_FAMILY: IP_FAMILY_IPV6}

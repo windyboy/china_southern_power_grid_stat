@@ -1030,7 +1030,7 @@ class CSGCoordinator(DataUpdateCoordinator):
 
         config_entry_need_update = False
         await self._async_refresh_client()
-        new_config = copy.deepcopy(self._config)
+        new_config = copy.deepcopy(dict(self._config))
         for account_number, account_data in self._config[CONF_ELE_ACCOUNTS].items():
             self._gathered_data[account_number] = {}
             account = CSGElectricityAccount.load(account_data)

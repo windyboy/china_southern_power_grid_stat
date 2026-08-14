@@ -476,7 +476,7 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if self._reauth_entry:
             # reauth
             # save the old config and only update the auth related data
-            old_config = copy.deepcopy(self._reauth_entry.data)
+            old_config = copy.deepcopy(dict(self._reauth_entry.data))
             data[CONF_ELE_ACCOUNTS] = old_config[CONF_ELE_ACCOUNTS]
             data[CONF_SETTINGS] = old_config[CONF_SETTINGS]
             new_options = dict(self._reauth_entry.options)
@@ -566,7 +566,7 @@ class CSGOptionsFlowHandler(config_entries.OptionsFlow):
             for account in self.all_electricity_accounts:
                 if account.account_number == account_num_to_add:
                     # store the account config in main entry instead of creating new entries
-                    new_data = copy.deepcopy(self.config_entry.data)
+                    new_data = copy.deepcopy(dict(self.config_entry.data))
                     new_data[CONF_ELE_ACCOUNTS][account_num_to_add] = account.dump()
                     # this must be set or update won't be detected
                     new_data[CONF_UPDATED_AT] = str(int(time.time() * 1000))
