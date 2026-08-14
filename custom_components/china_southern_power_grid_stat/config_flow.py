@@ -23,6 +23,7 @@ from homeassistant.helpers import selector, translation
 
 from .config import (
     async_get_csg_clientsession,
+    async_get_csg_clientsession_for_family,
     get_configured_ip_family,
     get_configured_update_interval,
 )
@@ -41,6 +42,7 @@ from .const import (
     CONF_SMS_CODE,
     CONF_UPDATE_INTERVAL,
     CONF_UPDATED_AT,
+    DEFAULT_IP_FAMILY,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
     ERROR_CANNOT_CONNECT,
@@ -53,6 +55,7 @@ from .const import (
     STEP_ALI_QR_LOGIN,
     STEP_CSG_QR_LOGIN,
     STEP_INIT,
+    STEP_NETWORK,
     STEP_QR_LOGIN,
     STEP_SETTINGS,
     STEP_SMS_LOGIN,
@@ -87,14 +90,24 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Create the options flow."""
         return CSGOptionsFlowHandler(config_entry)
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """
-        Handle the initial step.
-        Let user choose the login method.
-        """
-        self.context["user_data"] = {}
+    def _default_ip_family(self) -> str:
+        """Default value for the network step (reauth pre-fills the entry's mode)."""
+        if self._reauth_entry is not None:
+            return get_configured_ip_family(self._reauth_entry)
+        return DEFAULT_IP_FAMILY
+
+    def _get_ip_family(self) -> str:
+        """Return the IP family selected in this flow."""
+        return self.context.get("user_data", {}).get(CONF_IP_FAMILY, DEFAULT_IP_FAMILY)
+
+    def _new_client(self) -> CSGClient:
+        """Create a CSG client using the IP family selected in this flow."""
+        return CSGClient(
+            async_get_csg_clientsession_for_family(self.hass, self._get_ip_family())
+        )
+
+    def _show_login_method_menu(self) -> FlowResult:
+        """Show the menu for choosing a login method."""
         return self.async_show_menu(
             step_id=STEP_USER,
             menu_options=[
@@ -105,6 +118,38 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 STEP_ALI_QR_LOGIN,
             ],
         )
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """
+        Handle the initial step.
+        Ask for the network IP family, then let the user choose a login method.
+        """
+        self.context["user_data"] = {}
+        return await self.async_step_network()
+
+    async def async_step_network(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Ask for the network IP family used to reach the CSG servers."""
+        if user_input is None:
+            schema = vol.Schema(
+                {
+                    vol.Required(
+                        CONF_IP_FAMILY, default=self._default_ip_family()
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=list(IP_FAMILY_OPTIONS),
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                            translation_key=CONF_IP_FAMILY,
+                        )
+                    ),
+                }
+            )
+            return self.async_show_form(step_id=STEP_NETWORK, data_schema=schema)
+        self.context["user_data"][CONF_IP_FAMILY] = user_input[CONF_IP_FAMILY]
+        return self._show_login_method_menu()
 
     async def async_step_sms_login(
         self, user_input: dict[str, Any] | None = None
@@ -182,7 +227,7 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
             }
         )
-        client = CSGClient(async_get_csg_clientsession(self.hass, self._reauth_entry))
+        client = self._new_client()
         username = self.context["user_data"][CONF_USERNAME]
 
         if user_input is None:
@@ -274,29 +319,53 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self.context["user_data"][CONF_LOGIN_TYPE] = LoginType.LOGIN_TYPE_ALI_QR
         return await self.async_step_qr_login()
 
+    def _show_qr_form(
+        self, login_type: LoginType, errors: dict[str, str] | None = None
+    ) -> FlowResult:
+        """Render the QR login form, reusing the stored QR image when present."""
+        image_link = self.context["user_data"].get("image_link")
+        description = (
+            f"<p>使用{LOGIN_TYPE_TO_QR_APP_NAME[login_type]}扫码登录。"
+            "登录完成后，点击下一步。</p>"
+        )
+        if image_link:
+            description += (
+                f'<img src="{image_link}" alt="QR code" style="width: 200px;"/>'
+            )
+        return self.async_show_form(
+            step_id=STEP_QR_LOGIN,
+            data_schema=vol.Schema(
+                {vol.Required(CONF_REFRESH_QR_CODE, default=False): bool}
+            ),
+            errors=errors,
+            # had to do this because strings.json conflicts with html tags
+            description_placeholders={"description": description},
+        )
+
     async def async_step_qr_login(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle QR code login step."""
-        client = CSGClient(async_get_csg_clientsession(self.hass, self._reauth_entry))
+        client = self._new_client()
+        login_type = self.context["user_data"][CONF_LOGIN_TYPE]
         if user_input is None:
             # create QR code
-            login_type = self.context["user_data"][CONF_LOGIN_TYPE]
-            login_id, image_link = await client.api_create_login_qr_code(
-                LOGIN_TYPE_TO_QR_CODE_TYPE[login_type]
-            )
-            self.context["user_data"]["login_id"] = login_id
-            self.context["user_data"]["image_link"] = image_link
-            return self.async_show_form(
-                step_id=STEP_QR_LOGIN,
-                data_schema=vol.Schema(
-                    {vol.Required(CONF_REFRESH_QR_CODE, default=False): bool}
-                ),
-                description_placeholders={
-                    "description": f"<p>使用{LOGIN_TYPE_TO_QR_APP_NAME[login_type]}扫码登录。登录完成后，点击下一步。"
-                    f'</p><img src="{image_link}" alt="QR code" style="width: 200px;"/>',
-                },
-            )
+            errors: dict[str, str] = {}
+            try:
+                login_id, image_link = await client.api_create_login_qr_code(
+                    LOGIN_TYPE_TO_QR_CODE_TYPE[login_type]
+                )
+            except CSGTransportError:
+                errors[CONF_GENERAL_ERROR] = ERROR_CANNOT_CONNECT
+            except Exception as ge:
+                _LOGGER.exception("Unexpected exception when creating QR code")
+                _LOGGER.debug("QR create error detail: %s", ge)
+                errors[CONF_GENERAL_ERROR] = ERROR_UNKNOWN
+            else:
+                self.context["user_data"]["login_id"] = login_id
+                self.context["user_data"]["image_link"] = image_link
+                return self._show_qr_form(login_type)
+            return self._show_qr_form(login_type, errors=errors)
         if user_input[CONF_REFRESH_QR_CODE]:
             return await self.async_step_qr_login()
         return await self.async_step_validate_qr_login()
@@ -305,14 +374,36 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Get QR scan status after user has scanned the code"""
-        client = CSGClient(async_get_csg_clientsession(self.hass, self._reauth_entry))
+        client = self._new_client()
         login_type = self.context["user_data"][CONF_LOGIN_TYPE]
         login_id = self.context["user_data"]["login_id"]
-        ok, auth_token = await client.api_get_qr_login_status(login_id)
+        try:
+            ok, auth_token = await client.api_get_qr_login_status(login_id)
+        except CSGTransportError:
+            return self._show_qr_form(
+                login_type, errors={CONF_GENERAL_ERROR: ERROR_CANNOT_CONNECT}
+            )
+        except Exception as ge:
+            _LOGGER.exception("Unexpected exception when querying QR login status")
+            _LOGGER.debug("QR status error detail: %s", ge)
+            return self._show_qr_form(
+                login_type, errors={CONF_GENERAL_ERROR: ERROR_UNKNOWN}
+            )
         if ok:
             # for QR login, use mobile number as username
             client.set_authentication_params(auth_token)
-            user_info = await client.api_get_user_info()
+            try:
+                user_info = await client.api_get_user_info()
+            except CSGTransportError:
+                return self._show_qr_form(
+                    login_type, errors={CONF_GENERAL_ERROR: ERROR_CANNOT_CONNECT}
+                )
+            except Exception as ge:
+                _LOGGER.exception("Unexpected exception when fetching QR user info")
+                _LOGGER.debug("QR user info error detail: %s", ge)
+                return self._show_qr_form(
+                    login_type, errors={CONF_GENERAL_ERROR: ERROR_UNKNOWN}
+                )
             username = user_info["mobile"]
             await self.check_and_set_unique_id(username)
             return await self.create_or_update_config_entry(
@@ -320,18 +411,8 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         # scan not detected, return to previous step
-        image_link = self.context["user_data"]["image_link"]
-        return self.async_show_form(
-            step_id=STEP_QR_LOGIN,
-            data_schema=vol.Schema(
-                {vol.Required(CONF_REFRESH_QR_CODE, default=False): bool}
-            ),
-            errors={CONF_GENERAL_ERROR: ERROR_QR_NOT_SCANNED},
-            # had to do this because strings.json conflicts with html tags
-            description_placeholders={
-                "description": f"<p>使用{LOGIN_TYPE_TO_QR_APP_NAME[login_type]}扫码登录。登录完成后，点击下一步。</p>"
-                f'<img src="{image_link}" alt="QR code" style="width: 200px;"/>',
-            },
+        return self._show_qr_form(
+            login_type, errors={CONF_GENERAL_ERROR: ERROR_QR_NOT_SCANNED}
         )
 
     async def check_and_set_unique_id(self, username: str):
@@ -364,7 +445,11 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             old_config = copy.deepcopy(self._reauth_entry.data)
             data[CONF_ELE_ACCOUNTS] = old_config[CONF_ELE_ACCOUNTS]
             data[CONF_SETTINGS] = old_config[CONF_SETTINGS]
-            self.hass.config_entries.async_update_entry(self._reauth_entry, data=data)
+            new_options = dict(self._reauth_entry.options)
+            new_options[CONF_IP_FAMILY] = self._get_ip_family()
+            self.hass.config_entries.async_update_entry(
+                self._reauth_entry, data=data, options=new_options
+            )
             await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
             self._reauth_entry = None
             return self.async_abort(reason="reauth_successful")
@@ -374,6 +459,7 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(
             title=f"CSG-{username}",
             data=data,
+            options={CONF_IP_FAMILY: self._get_ip_family()},
         )
 
     async def async_step_reauth(self, user_input=None):
