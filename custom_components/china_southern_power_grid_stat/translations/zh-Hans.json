@@ -75,9 +75,20 @@
             },
             "settings": {
                 "data": {
+                    "ip_family": "\u7f51\u7edc\u534f\u8bae",
                     "update_interval": "\u66f4\u65b0\u95f4\u9694\uff08\u79d2\uff09"
                 },
+                "description": "\u9ed8\u8ba4\u4ec5\u4f7f\u7528 IPv4\u3002\u81ea\u52a8\u6a21\u5f0f\u4f1a\u5141\u8bb8 IPv4/IPv6\uff0c\u5728 IPv6 \u53ef\u89e3\u6790\u4f46\u4e0d\u53ef\u8fde\u63a5\u7684\u73af\u5883\u4e2d\u53ef\u80fd\u5ef6\u8fdf\uff1b\u4ec5 IPv6 \u4e0d\u4f1a\u56de\u9000 IPv4\u3002",
                 "title": "\u53c2\u6570\u8bbe\u7f6e"
+            }
+        }
+    },
+    "selector": {
+        "ip_family": {
+            "options": {
+                "auto": "\u81ea\u52a8\u9009\u62e9 IPv4/IPv6",
+                "ipv4": "\u4ec5 IPv4\uff08\u9ed8\u8ba4\u3001\u63a8\u8350\uff09",
+                "ipv6": "\u4ec5 IPv6\uff08\u9ad8\u7ea7\uff09"
             }
         }
     }

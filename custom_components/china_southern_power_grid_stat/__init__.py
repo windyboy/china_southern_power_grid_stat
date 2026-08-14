@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import logging
-import socket
 import time
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import entity_registry
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceEntry
 
+from .config import async_get_csg_clientsession
 from .const import (
     CONF_AUTH_TOKEN,
     CONF_ELE_ACCOUNTS,
@@ -34,12 +35,30 @@ PLATFORMS: list[Platform] = [Platform.SENSOR]
 _LOGGER = logging.getLogger(__name__)
 
 
+def _create_options_update_listener(
+    initial_options: Mapping[str, Any],
+) -> Callable[[HomeAssistant, ConfigEntry], Awaitable[None]]:
+    """Create a listener that ignores unrelated config-entry data updates."""
+    previous_options = dict(initial_options)
+
+    async def _async_reload_on_options_update(
+        hass: HomeAssistant, updated_entry: ConfigEntry
+    ) -> None:
+        nonlocal previous_options
+        if updated_entry.options == previous_options:
+            return
+        previous_options = dict(updated_entry.options)
+        await hass.config_entries.async_reload(updated_entry.entry_id)
+
+    return _async_reload_on_options_update
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up China Southern Power Grid Statistics from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
     # validate session, re-authenticate if needed
-    session = async_get_clientsession(hass, family=socket.AF_INET)
+    session = async_get_csg_clientsession(hass, entry)
     client = CSGClient.load(
         {
             CONF_AUTH_TOKEN: entry.data[CONF_AUTH_TOKEN],
@@ -56,6 +75,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         new_data = entry.data.copy()
         new_data.pop(CONF_PASSWORD, None)
         hass.config_entries.async_update_entry(entry, data=new_data)
+
+    entry.async_on_unload(
+        entry.add_update_listener(_create_options_update_listener(entry.options))
+    )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -116,7 +139,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     _LOGGER.info("Removing entry: account %s", entry.data[CONF_USERNAME])
 
     # logout
-    session = async_get_clientsession(hass, family=socket.AF_INET)
+    session = async_get_csg_clientsession(hass, entry)
     client = CSGClient.load(
         {
             CONF_AUTH_TOKEN: entry.data[CONF_AUTH_TOKEN],

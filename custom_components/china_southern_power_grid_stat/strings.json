@@ -71,14 +71,25 @@
       },
       "settings": {
         "title": "参数设置",
+        "description": "默认仅使用 IPv4。自动模式会允许 IPv4/IPv6，在 IPv6 可解析但不可连接的环境中可能延迟；仅 IPv6 不会回退 IPv4。",
         "data": {
-          "update_interval": "更新间隔（秒）"
+          "update_interval": "更新间隔（秒）",
+          "ip_family": "网络协议"
         }
       }
     },
     "abort": {
       "no_account": "账户未绑定缴费号",
       "all_added": "没有可添加到此集成的缴费号"
+    }
+  },
+  "selector": {
+    "ip_family": {
+      "options": {
+        "ipv4": "仅 IPv4（默认、推荐）",
+        "auto": "自动选择 IPv4/IPv6",
+        "ipv6": "仅 IPv6（高级）"
+      }
     }
   }
 }
