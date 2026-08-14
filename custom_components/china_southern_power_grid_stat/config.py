@@ -28,7 +28,7 @@ IP_FAMILY_TO_SOCKET = {
 
 
 def get_configured_ip_family(entry: ConfigEntry | None) -> str:
-    """Return the configured address-family mode, defaulting safely to IPv4."""
+    """Return the configured address-family mode, defaulting to the safe default."""
     if entry is None:
         return DEFAULT_IP_FAMILY
     mode = entry.options.get(CONF_IP_FAMILY, DEFAULT_IP_FAMILY)
@@ -46,9 +46,22 @@ def get_configured_update_interval(entry: ConfigEntry) -> int:
     )
 
 
+def _socket_family(ip_family: str) -> int:
+    """Map an IP-family mode to a socket family, falling back to the default."""
+    return IP_FAMILY_TO_SOCKET.get(ip_family, IP_FAMILY_TO_SOCKET[DEFAULT_IP_FAMILY])
+
+
 def async_get_csg_clientsession(
     hass: HomeAssistant, entry: ConfigEntry | None = None
 ) -> aiohttp.ClientSession:
     """Return the HA-managed session for the configured CSG address family."""
-    family = IP_FAMILY_TO_SOCKET[get_configured_ip_family(entry)]
-    return async_get_clientsession(hass, family=family)
+    return async_get_clientsession(
+        hass, family=_socket_family(get_configured_ip_family(entry))
+    )
+
+
+def async_get_csg_clientsession_for_family(
+    hass: HomeAssistant, ip_family: str
+) -> aiohttp.ClientSession:
+    """Return the HA-managed session for an explicit address-family mode."""
+    return async_get_clientsession(hass, family=_socket_family(ip_family))

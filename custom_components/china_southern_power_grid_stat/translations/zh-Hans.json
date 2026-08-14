@@ -1,95 +1,102 @@
 {
-    "config": {
-        "abort": {
-            "already_configured": "\u8d26\u53f7\u5df2\u6dfb\u52a0\uff0c\u8bf7\u52ff\u91cd\u590d\u6dfb\u52a0",
-            "reauth_successful": "\u767b\u5f55\u6210\u529f"
-        },
-        "error": {
-            "cannot_connect": "\u7f51\u7edc\u5f02\u5e38",
-            "invalid_auth": "\u767b\u5f55\u4fe1\u606f\u65e0\u6548",
-            "qr_not_scanned": "\u626b\u63cf\u4e8c\u7ef4\u7801\u5e76\u786e\u8ba4\u767b\u5f55",
-            "unknown": "\u672a\u77e5\u9519\u8bef"
-        },
-        "step": {
-            "qr_login": {
-                "data": {
-                    "refresh_qr_code": "\u5237\u65b0\u4e8c\u7ef4\u7801"
-                },
-                "description": "{description}",
-                "title": "\u626b\u7801\u767b\u5f55"
-            },
-            "reauth_confirm": {
-                "description": "\u767b\u5f55\u72b6\u6001\u5df2\u8fc7\u671f\uff0c\u8bf7\u91cd\u65b0\u767b\u5f55",
-                "title": "\u91cd\u65b0\u767b\u5f55\u8d26\u53f7"
-            },
-            "sms_login": {
-                "data": {
-                    "username": "\u624b\u673a\u53f7",
-                    "username_invalid": "\u8bf7\u8f93\u516511\u4f4d\u624b\u673a\u53f7"
-                },
-                "description": "\u4f7f\u7528\u624b\u673a\u53f7\u548c\u77ed\u4fe1\u9a8c\u8bc1\u7801\u767b\u5f55",
-                "title": "\u767b\u5f55\u5357\u65b9\u7535\u7f51"
-            },
-            "sms_pwd_login": {
-                "data": {
-                    "password": "\u5bc6\u7801",
-                    "password_invalid": "\u8bf7\u8f93\u51658-16\u4f4d\u767b\u9646\u5bc6\u7801",
-                    "username": "\u624b\u673a\u53f7",
-                    "username_invalid": "\u8bf7\u8f93\u516511\u4f4d\u624b\u673a\u53f7"
-                },
-                "description": "\u4f7f\u7528\u624b\u673a\u53f7\u3001\u5bc6\u7801\u548c\u77ed\u4fe1\u9a8c\u8bc1\u7801\u767b\u5f55",
-                "title": "\u767b\u5f55\u5357\u65b9\u7535\u7f51"
-            },
-            "user": {
-                "description": "\u9009\u62e9\u7528\u4e8e\u767b\u5f55\u5357\u65b9\u7535\u7f51\u8d26\u53f7\u7684\u65b9\u5f0f",
-                "menu_options": {
-                    "ali_qr_login": "\u652f\u4ed8\u5b9d\u626b\u7801\u767b\u5f55",
-                    "csg_qr_login": "\u5357\u7f51APP\u626b\u7801\u767b\u5f55",
-                    "sms_login": "\u77ed\u4fe1\u9a8c\u8bc1\u7801\u767b\u5f55",
-                    "sms_pwd_login": "\u77ed\u4fe1\u9a8c\u8bc1\u7801\u548c\u5bc6\u7801\u767b\u5f55",
-                    "wx_qr_login": "\u5fae\u4fe1\u626b\u7801\u767b\u5f55"
-                },
-                "title": "\u9009\u62e9\u767b\u5f55\u65b9\u5f0f"
-            },
-            "validate_sms_code": {
-                "data": {
-                    "code": "\u77ed\u4fe1\u9a8c\u8bc1\u7801",
-                    "code_invalid": "\u8bf7\u8f93\u51656\u4f4d\u77ed\u4fe1\u9a8c\u8bc1\u7801"
-                },
-                "description": "\u9a8c\u8bc1\u7801\u5df2\u53d1\u9001\u5230: {phone_no}",
-                "title": "\u8f93\u5165\u77ed\u4fe1\u9a8c\u8bc1\u7801"
-            }
-        }
+  "config": {
+    "abort": {
+      "already_configured": "账号已添加，请勿重复添加",
+      "reauth_successful": "登录成功"
     },
-    "options": {
-        "abort": {
-            "all_added": "\u6ca1\u6709\u53ef\u6dfb\u52a0\u5230\u6b64\u96c6\u6210\u7684\u7f34\u8d39\u53f7",
-            "no_account": "\u8d26\u6237\u672a\u7ed1\u5b9a\u7f34\u8d39\u53f7"
-        },
-        "step": {
-            "add_account": {
-                "title": "\u9009\u62e9\u7f34\u8d39\u53f7"
-            },
-            "init": {
-                "title": "\u9009\u62e9\u64cd\u4f5c"
-            },
-            "settings": {
-                "data": {
-                    "ip_family": "\u7f51\u7edc\u534f\u8bae",
-                    "update_interval": "\u66f4\u65b0\u95f4\u9694\uff08\u79d2\uff09"
-                },
-                "description": "\u9ed8\u8ba4\u4ec5\u4f7f\u7528 IPv4\u3002\u81ea\u52a8\u6a21\u5f0f\u4f1a\u5141\u8bb8 IPv4/IPv6\uff0c\u5728 IPv6 \u53ef\u89e3\u6790\u4f46\u4e0d\u53ef\u8fde\u63a5\u7684\u73af\u5883\u4e2d\u53ef\u80fd\u5ef6\u8fdf\uff1b\u4ec5 IPv6 \u4e0d\u4f1a\u56de\u9000 IPv4\u3002",
-                "title": "\u53c2\u6570\u8bbe\u7f6e"
-            }
-        }
+    "error": {
+      "cannot_connect": "网络异常",
+      "invalid_auth": "登录信息无效",
+      "qr_not_scanned": "扫描二维码并确认登录",
+      "unknown": "未知错误"
     },
-    "selector": {
-        "ip_family": {
-            "options": {
-                "auto": "\u81ea\u52a8\u9009\u62e9 IPv4/IPv6",
-                "ipv4": "\u4ec5 IPv4\uff08\u9ed8\u8ba4\u3001\u63a8\u8350\uff09",
-                "ipv6": "\u4ec5 IPv6\uff08\u9ad8\u7ea7\uff09"
-            }
+    "step": {
+      "user": {
+        "title": "选择登录方式",
+        "description": "选择用于登录南方电网账号的方式",
+        "menu_options": {
+          "sms_login": "短信验证码登录",
+          "sms_pwd_login": "短信验证码和密码登录",
+          "csg_qr_login": "南网APP扫码登录",
+          "wx_qr_login": "微信扫码登录",
+          "ali_qr_login": "支付宝扫码登录"
         }
+      },
+      "network": {
+        "title": "网络协议",
+        "description": "选择连接南方电网服务器时使用的网络协议",
+        "data": {
+          "ip_family": "网络协议"
+        }
+      },
+      "sms_login": {
+        "title": "登录南方电网",
+        "description": "使用手机号和短信验证码登录",
+        "data": {
+          "username": "手机号",
+          "username_invalid": "请输入11位手机号"
+        }
+      },
+      "sms_pwd_login": {
+        "title": "登录南方电网",
+        "description": "使用手机号、密码和短信验证码登录",
+        "data": {
+          "username": "手机号",
+          "username_invalid": "请输入11位手机号",
+          "password": "密码",
+          "password_invalid": "请输入8-16位登陆密码"
+        }
+      },
+      "validate_sms_code": {
+        "title": "输入短信验证码",
+        "description": "验证码已发送到: {phone_no}",
+        "data": {
+          "code": "短信验证码",
+          "code_invalid": "请输入6位短信验证码"
+        }
+      },
+      "qr_login": {
+        "title": "扫码登录",
+        "description": "{description}",
+        "data": {
+          "refresh_qr_code": "刷新二维码"
+        }
+      },
+      "reauth_confirm": {
+        "title": "重新登录账号",
+        "description": "登录状态已过期，请重新登录"
+      }
     }
+  },
+  "options": {
+    "abort": {
+      "no_account": "账户未绑定缴费号",
+      "all_added": "没有可添加到此集成的缴费号"
+    },
+    "step": {
+      "init": {
+        "title": "选择操作"
+      },
+      "add_account": {
+        "title": "选择缴费号"
+      },
+      "settings": {
+        "title": "参数设置",
+        "description": "默认自动选择 IPv4/IPv6。仅 IPv4 只走 IPv4；仅 IPv6 只走 IPv6、不会回退；自动模式在 IPv6 可解析但不可连接的环境中可能延迟。",
+        "data": {
+          "update_interval": "更新间隔（秒）",
+          "ip_family": "网络协议"
+        }
+      }
+    }
+  },
+  "selector": {
+    "ip_family": {
+      "options": {
+        "ipv4": "仅 IPv4",
+        "auto": "自动选择 IPv4/IPv6（默认、推荐）",
+        "ipv6": "仅 IPv6（高级）"
+      }
+    }
+  }
 }
