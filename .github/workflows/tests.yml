@@ -13,7 +13,7 @@ jobs:
         include:
           - python: "3.11"
             homeassistant: "2023.11.3"
-          - python: "3.13"
+          - python: "3.14"
             homeassistant: "2026.8.1"
     steps:
       - uses: actions/checkout@v4
@@ -28,4 +28,4 @@ jobs:
           "homeassistant==${{ matrix.homeassistant }}"
           -r requirements_test.txt
       - name: Run tests
-        run: pytest -q
+        run: python -m pytest -q
