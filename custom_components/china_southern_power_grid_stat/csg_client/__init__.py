@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Asynchronous implementation of CSG's Web API.
 """
@@ -19,7 +18,60 @@ import aiohttp
 from Crypto.Cipher import AES, PKCS1_v1_5
 from Crypto.PublicKey import RSA
 
-from .const import *
+from .const import (
+    AREACODE_FALLBACK,
+    ATTR_ACCOUNT_NUMBER,
+    ATTR_ADDRESS,
+    ATTR_AREA_CODE,
+    ATTR_AUTH_TOKEN,
+    ATTR_ELE_CUSTOMER_ID,
+    ATTR_METERING_POINT_ID,
+    ATTR_METERING_POINT_NUMBER,
+    ATTR_USER_NAME,
+    BASE_PATH_APP,
+    BASE_PATH_WEB,
+    CREDENTIAL_PUBKEY,
+    HEADER_CUST_NUMBER,
+    HEADER_X_AUTH_TOKEN,
+    JSON_KEY_ACCT_ID,
+    JSON_KEY_AREA_CODE,
+    JSON_KEY_CRED_TYPE,
+    JSON_KEY_CUST_NUMBER,
+    JSON_KEY_DATA,
+    JSON_KEY_ELE_CUST_ID,
+    JSON_KEY_LOGON_CHAN,
+    JSON_KEY_MESSAGE,
+    JSON_KEY_METERING_POINT_ID,
+    JSON_KEY_METERING_POINT_NUMBER,
+    JSON_KEY_PARAM,
+    JSON_KEY_SMS_CODE,
+    JSON_KEY_STA,
+    JSON_KEY_YEAR_MONTH,
+    LOGIN_TYPE_PHONE_CODE,
+    LOGIN_TYPE_PHONE_PWD_CODE,
+    LOGIN_TYPE_TO_QR_CODE_TYPE,
+    LOGON_CHANNEL_HANDHELD_HALL,
+    LoginType,
+    PARAM_IV,
+    PARAM_KEY,
+    QRCodeType,
+    RESP_STA_LOGIN_WRONG_CREDENTIAL,
+    RESP_STA_NO_LOGIN,
+    RESP_STA_NO_METERING_POINT,
+    RESP_STA_QR_NOT_SCANNED,
+    RESP_STA_QR_TIMEOUT,
+    RESP_STA_SUCCESS,
+    SEND_MSG_TYPE_VERIFICATION_CODE,
+    VERIFICATION_CODE_TYPE_LOGIN,
+    WF_ATTR_CHARGE,
+    WF_ATTR_DATE,
+    WF_ATTR_KWH,
+    WF_ATTR_LADDER,
+    WF_ATTR_LADDER_REMAINING_KWH,
+    WF_ATTR_LADDER_START_DATE,
+    WF_ATTR_LADDER_TARIFF,
+    WF_ATTR_MONTH,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -105,7 +157,7 @@ def encrypt_params(params: dict) -> str:
 
 
 def decrypt_params(encrypted: str) -> dict:
-    """Encrypt request message using AES with KEY, IV"""
+    """Decrypt request message using AES with KEY, IV"""
     json_cipher = AES.new(PARAM_KEY, AES.MODE_CBC, PARAM_IV)
     decrypted = json_cipher.decrypt(b64decode(encrypted))
     # remove padding
@@ -568,50 +620,6 @@ class CSGClient:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
 
-    async def api_query_day_electric_and_temperature(
-        self,
-        year: int,
-        month: int,
-        area_code: str,
-        ele_customer_id: str,
-        metering_point_id: str,
-    ) -> dict:
-        """get power in kWh, hi/lo temperature by day in the given month"""
-        path = "charge/queryDayElectricAndTemperature"
-        payload = {
-            JSON_KEY_AREA_CODE: area_code,
-            JSON_KEY_ELE_CUST_ID: ele_customer_id,
-            JSON_KEY_YEAR_MONTH: f"{year}{month:02d}",
-            JSON_KEY_METERING_POINT_ID: metering_point_id,
-        }
-        _, resp_data = await self._request_with_retry(path, payload)
-        if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
-            return resp_data[JSON_KEY_DATA]
-        self._handle_unsuccessful_response(path, resp_data)
-
-    async def api_query_electricity_calender(
-        self,
-        year: int,
-        month: int,
-        area_code: str,
-        ele_customer_id: str,
-        metering_point_id: str,
-        metering_point_number: str,
-    ) -> dict:
-        """get power in kWh, hi/lo/avg temperature by day in the given month"""
-        path = "charge/queryElectricityCalendar"
-        payload = {
-            JSON_KEY_AREA_CODE: area_code,
-            JSON_KEY_ELE_CUST_ID: ele_customer_id,
-            JSON_KEY_YEAR_MONTH: f"{year}{month:02d}",
-            JSON_KEY_METERING_POINT_ID: metering_point_id,
-            "deviceIdentif": metering_point_number,
-        }
-        _, resp_data = await self._request_with_retry(path, payload)
-        if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
-            return resp_data[JSON_KEY_DATA]
-        self._handle_unsuccessful_response(path, resp_data)
-
     async def api_query_account_surplus(
         self, area_code: str, ele_customer_id: str
     ):
@@ -649,23 +657,6 @@ class CSGClient:
         """Contains: power consumption(kWh) of yesterday"""
         path = "charge/queryDayElectricByMPointYesterday"
         payload = {JSON_KEY_ELE_CUST_ID: ele_customer_id, JSON_KEY_AREA_CODE: area_code}
-        _, resp_data = await self._request_with_retry(path, payload)
-        if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
-            return resp_data[JSON_KEY_DATA]
-        self._handle_unsuccessful_response(path, resp_data)
-
-    async def api_query_charges(
-        self, area_code: str, ele_customer_id: str, _type="0"
-    ):
-        """Contains: balance and arrears, metering points"""
-        path = "charge/queryCharges"
-        payload = {
-            JSON_KEY_AREA_CODE: area_code,
-            "eleModels": [
-                {JSON_KEY_ELE_CUST_ID: ele_customer_id, JSON_KEY_AREA_CODE: area_code}
-            ],
-            "type": _type,
-        }
         _, resp_data = await self._request_with_retry(path, payload)
         if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
             return resp_data[JSON_KEY_DATA]

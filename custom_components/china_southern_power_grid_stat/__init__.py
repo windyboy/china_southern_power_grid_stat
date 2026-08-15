@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """The China Southern Power Grid Statistics integration."""
 from __future__ import annotations
 
