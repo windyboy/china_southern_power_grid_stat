@@ -8,6 +8,10 @@
 
 本仓库维护自 [CubicPill/china_southern_power_grid_stat](https://github.com/CubicPill/china_southern_power_grid_stat) 的 fork，感谢原项目及贡献者。
 
+## 维护者
+
+当前维护者 [@windyboy](https://github.com/windyboy)。
+
 ## 支持功能
 
 - ✅支持南方电网覆盖范围内的电费数据查询（广东、广西、云南、贵州、海南）
@@ -48,17 +52,25 @@ IPv4；仅 IPv6 只解析、连接 IPv6 且不会回退；自动模式在 IPv6 �
 
 ### 配置界面
 
+选择网络协议
+
+<img src="https://raw.githubusercontent.com/windyboy/china_southern_power_grid_stat/main/img/setup_network.png" alt="选择网络协议" style="width: 400px;">
+
 支持的登录方式
 
-<img src="https://raw.githubusercontent.com/windyboy/china_southern_power_grid_stat/main/img/setup_login.png" alt="" style="width: 400px;">
+<img src="https://raw.githubusercontent.com/windyboy/china_southern_power_grid_stat/main/img/setup_login.png" alt="选择登录方式" style="width: 400px;">
 
 配置界面
 
-<img src="https://raw.githubusercontent.com/windyboy/china_southern_power_grid_stat/main/img/setup_add_account.png" alt="" style="width: 400px;">
+<img src="https://raw.githubusercontent.com/windyboy/china_southern_power_grid_stat/main/img/setup_add_account.png" alt="配置界面" style="width: 400px;">
 
 添加缴费号
 
-<img src="https://raw.githubusercontent.com/windyboy/china_southern_power_grid_stat/main/img/setup_select_account.png" alt="" style="width: 400px;">
+<img src="https://raw.githubusercontent.com/windyboy/china_southern_power_grid_stat/main/img/setup_select_account.png" alt="添加缴费号" style="width: 400px;">
+
+参数设置
+
+<img src="https://raw.githubusercontent.com/windyboy/china_southern_power_grid_stat/main/img/setup_params.png" alt="参数设置（含网络协议）" style="width: 400px;">
 
 传感器列表
 
@@ -83,11 +95,7 @@ IPv4；仅 IPv6 只解析、连接 IPv6 且不会回退；自动模式在 IPv6 �
 
 传感器额外参数（每月用量、每日用量）
 
-<img src="https://raw.githubusercontent.com/windyboy/china_southern_power_grid_stat/main/img/sensor_attr.png" alt="" style="width: 400px;">
-
-参数设置
-
-<img src="https://raw.githubusercontent.com/windyboy/china_southern_power_grid_stat/main/img/setup_params.png" alt="" style="width: 400px;">
+<img src="https://raw.githubusercontent.com/windyboy/china_southern_power_grid_stat/main/img/sensor_attr.png" alt="传感器额外参数" style="width: 400px;">
 
 ### 数据更新策略
 
