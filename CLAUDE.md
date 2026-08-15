@@ -46,7 +46,7 @@ python csg_client_demo.py
 
 ### Key Design Patterns
 
-- **Asynchronous API client**: `CSGClient` uses an injected `aiohttp.ClientSession`; Home Assistant supplies an IPv4-only shared session
+- **Asynchronous API client**: `CSGClient` uses an injected `aiohttp.ClientSession`; Home Assistant supplies a shared session whose address family is configurable (auto / IPv4 / IPv6), default auto
 - **Session persistence**: Auth token stored in config entry data, validated on each setup
 - **Conditional updates**: Last month/year data only updates during first few days of new periods to reduce API calls
 - **Parallel fetching**: Multiple API calls run concurrently via `asyncio.gather()` in coordinator

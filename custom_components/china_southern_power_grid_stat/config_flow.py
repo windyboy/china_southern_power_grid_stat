@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Config flow for China Southern Power Grid Statistics integration.
 Steps:
@@ -108,6 +107,17 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             async_get_csg_clientsession_for_family(self.hass, self._get_ip_family())
         )
 
+    async def _get_step_invalid_message(
+        self, step: str, field: str, fallback: str
+    ) -> str:
+        """Return the translated 'invalid' message for a form field."""
+        trans = await translation.async_get_translations(
+            self.hass, self.hass.config.language, "config", {DOMAIN}
+        )
+        return trans.get(
+            f"component.{DOMAIN}.config.step.{step}.data.{field}_invalid", fallback
+        )
+
     def _show_login_method_menu(self) -> FlowResult:
         """Show the menu for choosing a login method."""
         return self.async_show_menu(
@@ -159,15 +169,8 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle SMS login step."""
         if user_input is None:
             # initial step, need phone number to send SMS code
-            trans = await translation.async_get_translations(
-                self.hass,
-                self.hass.config.language,
-                "config",
-                {DOMAIN},
-            )
-            msg_username = trans.get(
-                f"component.{DOMAIN}.config.step.sms_login.data.username_invalid",
-                "请输入11位手机号",
+            msg_username = await self._get_step_invalid_message(
+                STEP_SMS_LOGIN, "username", "请输入11位手机号"
             )
             return self.async_show_form(
                 step_id=STEP_SMS_LOGIN,
@@ -189,19 +192,11 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle SMS and password login step."""
         if user_input is None:
-            trans = await translation.async_get_translations(
-                self.hass,
-                self.hass.config.language,
-                "config",
-                {DOMAIN},
+            msg_username = await self._get_step_invalid_message(
+                STEP_SMS_PWD_LOGIN, "username", "请输入11位手机号"
             )
-            msg_username = trans.get(
-                f"component.{DOMAIN}.config.step.sms_pwd_login.data.username_invalid",
-                "请输入11位手机号",
-            )
-            msg_password = trans.get(
-                f"component.{DOMAIN}.config.step.sms_pwd_login.data.password_invalid",
-                "请输入8-16位登陆密码",
+            msg_password = await self._get_step_invalid_message(
+                STEP_SMS_PWD_LOGIN, "password", "请输入8-16位登陆密码"
             )
             return self.async_show_form(
                 step_id=STEP_SMS_PWD_LOGIN,
@@ -225,15 +220,8 @@ class CSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle SMS code validation step, for both SMS and SMS+password login."""
-        trans = await translation.async_get_translations(
-            self.hass,
-            self.hass.config.language,
-            "config",
-            {DOMAIN},
-        )
-        msg_code = trans.get(
-            f"component.{DOMAIN}.config.step.validate_sms_code.data.sms_code_invalid",
-            "请输入6位短信验证码",
+        msg_code = await self._get_step_invalid_message(
+            STEP_VALIDATE_SMS_CODE, "sms_code", "请输入6位短信验证码"
         )
         schema = vol.Schema(
             {

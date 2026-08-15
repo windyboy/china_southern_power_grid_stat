@@ -105,99 +105,13 @@ async def async_setup_entry(
                 legacy_device.id, new_identifiers={scoped_identifier}
             )
         sensors = [
-            # balance
-            CSGCostSensor(coordinator, ele_account_number, SUFFIX_BAL),
-            # arrears
-            CSGCostSensor(coordinator, ele_account_number, SUFFIX_ARR),
-            # yesterday kwh
-            CSGEnergySensor(
+            sensor_class(
                 coordinator,
                 ele_account_number,
-                SUFFIX_YESTERDAY_KWH,
-            ),
-            # latest day usage that is available, with extra attributes about the date
-            CSGEnergySensor(
-                coordinator,
-                ele_account_number,
-                SUFFIX_LATEST_DAY_KWH,
-                extra_state_attributes_key=ATTR_KEY_LATEST_DAY_DATE,
-            ),
-            # latest day cost that is available, with extra attributes about the date
-            CSGCostSensor(
-                coordinator,
-                ele_account_number,
-                SUFFIX_LATEST_DAY_COST,
-                extra_state_attributes_key=ATTR_KEY_LATEST_DAY_DATE,
-            ),
-            # this year's total energy, with extra attributes about monthly usage
-            CSGEnergySensor(
-                coordinator,
-                ele_account_number,
-                SUFFIX_THIS_YEAR_KWH,
-                extra_state_attributes_key=ATTR_KEY_THIS_YEAR_BY_MONTH,
-            ),
-            # this year's total cost
-            CSGCostSensor(
-                coordinator,
-                ele_account_number,
-                SUFFIX_THIS_YEAR_COST,
-            ),
-            # this month's total energy, with extra attributes about daily usage
-            CSGEnergySensor(
-                coordinator,
-                ele_account_number,
-                SUFFIX_THIS_MONTH_KWH,
-                extra_state_attributes_key=ATTR_KEY_THIS_MONTH_BY_DAY,
-            ),
-            # this month's total cost, with extra attributes about daily usage
-            CSGCostSensor(
-                coordinator,
-                ele_account_number,
-                SUFFIX_THIS_MONTH_COST,
-                extra_state_attributes_key=ATTR_KEY_THIS_MONTH_BY_DAY,
-            ),
-            # current ladder, with extra attributes about start date
-            CSGLadderStageSensor(
-                coordinator,
-                ele_account_number,
-                SUFFIX_CURRENT_LADDER,
-                extra_state_attributes_key=ATTR_KEY_CURRENT_LADDER_START_DATE,
-            ),
-            # current ladder remaining kwh
-            CSGEnergySensor(
-                coordinator, ele_account_number, SUFFIX_CURRENT_LADDER_REMAINING_KWH
-            ),
-            # current ladder tariff
-            CSGCostSensor(
-                coordinator, ele_account_number, SUFFIX_CURRENT_LADDER_TARIFF
-            ),
-            # last year's total energy, with extra attributes about monthly usage
-            CSGEnergySensor(
-                coordinator,
-                ele_account_number,
-                SUFFIX_LAST_YEAR_KWH,
-                extra_state_attributes_key=ATTR_KEY_LAST_YEAR_BY_MONTH,
-            ),
-            # last year's total cost
-            CSGCostSensor(
-                coordinator,
-                ele_account_number,
-                SUFFIX_LAST_YEAR_COST,
-            ),
-            # last month's total energy, with extra attributes about daily usage
-            CSGEnergySensor(
-                coordinator,
-                ele_account_number,
-                SUFFIX_LAST_MONTH_KWH,
-                extra_state_attributes_key=ATTR_KEY_LAST_MONTH_BY_DAY,
-            ),
-            # last month's total cost, with extra attributes about daily usage
-            CSGCostSensor(
-                coordinator,
-                ele_account_number,
-                SUFFIX_LAST_MONTH_COST,
-                extra_state_attributes_key=ATTR_KEY_LAST_MONTH_BY_DAY,
-            ),
+                suffix,
+                extra_state_attributes_key=extra_state_attributes_key,
+            )
+            for sensor_class, suffix, extra_state_attributes_key in _SENSOR_DEFINITIONS
         ]
 
         all_sensors.extend(sensors)
@@ -389,6 +303,25 @@ class CSGLadderStageSensor(CSGBaseSensor):
 
     _attr_icon = "mdi:stairs"
 
+_SENSOR_DEFINITIONS: tuple[tuple[type, str, str | None], ...] = (
+    (CSGCostSensor, SUFFIX_BAL, None),
+    (CSGCostSensor, SUFFIX_ARR, None),
+    (CSGEnergySensor, SUFFIX_YESTERDAY_KWH, None),
+    (CSGEnergySensor, SUFFIX_LATEST_DAY_KWH, ATTR_KEY_LATEST_DAY_DATE),
+    (CSGCostSensor, SUFFIX_LATEST_DAY_COST, ATTR_KEY_LATEST_DAY_DATE),
+    (CSGEnergySensor, SUFFIX_THIS_YEAR_KWH, ATTR_KEY_THIS_YEAR_BY_MONTH),
+    (CSGCostSensor, SUFFIX_THIS_YEAR_COST, None),
+    (CSGEnergySensor, SUFFIX_THIS_MONTH_KWH, ATTR_KEY_THIS_MONTH_BY_DAY),
+    (CSGCostSensor, SUFFIX_THIS_MONTH_COST, ATTR_KEY_THIS_MONTH_BY_DAY),
+    (CSGLadderStageSensor, SUFFIX_CURRENT_LADDER, ATTR_KEY_CURRENT_LADDER_START_DATE),
+    (CSGEnergySensor, SUFFIX_CURRENT_LADDER_REMAINING_KWH, None),
+    (CSGCostSensor, SUFFIX_CURRENT_LADDER_TARIFF, None),
+    (CSGEnergySensor, SUFFIX_LAST_YEAR_KWH, ATTR_KEY_LAST_YEAR_BY_MONTH),
+    (CSGCostSensor, SUFFIX_LAST_YEAR_COST, None),
+    (CSGEnergySensor, SUFFIX_LAST_MONTH_KWH, ATTR_KEY_LAST_MONTH_BY_DAY),
+    (CSGCostSensor, SUFFIX_LAST_MONTH_COST, ATTR_KEY_LAST_MONTH_BY_DAY),
+)
+
 
 class CSGCoordinator(DataUpdateCoordinator):
     """CSG custom coordinator."""
@@ -474,6 +407,36 @@ class CSGCoordinator(DataUpdateCoordinator):
             _LOGGER.exception("Unexpected exception in %s", func.__name__)
             return False, (func.__name__, err)
 
+    async def _async_fetch_year_stats(
+        self, account: CSGElectricityAccount, year: int
+    ) -> tuple:
+        """Fetch one year's cost, kWh, and monthly breakdown."""
+        success, result = await self._async_fetch(
+            self._client.get_year_month_stats, account, year
+        )
+        if success:
+            return result
+        return STATE_UNAVAILABLE, STATE_UNAVAILABLE, STATE_UNAVAILABLE
+
+    async def _async_fetch_month_details(
+        self, account: CSGElectricityAccount, year_month: tuple[int, int]
+    ):
+        """Fetch monthly usage and cost detail in parallel."""
+        task_usage = asyncio.create_task(
+            self._async_fetch(
+                self._client.get_month_daily_usage_detail, account, year_month
+            )
+        )
+        task_cost = asyncio.create_task(
+            self._async_fetch(
+                self._client.get_month_daily_cost_detail, account, year_month
+            )
+        )
+        (success_usage, result_usage), (success_cost, result_cost) = await asyncio.gather(
+            task_usage, task_cost
+        )
+        return success_usage, result_usage, success_cost, result_cost
+
     async def _async_update_bal_arr(self, account: CSGElectricityAccount):
         """Update balance and arrears"""
         success, result = await self._async_fetch(
@@ -521,33 +484,10 @@ class CSGCoordinator(DataUpdateCoordinator):
         ] = yesterday_kwh
 
     async def _async_update_this_year_stats(self, account: CSGElectricityAccount):
-        """Update this year's data"""
-        success, result = await self._async_fetch(
-            self._client.get_year_month_stats, account, self._this_year
+        """Update this year's data."""
+        this_year_cost, this_year_kwh, this_year_by_month = (
+            await self._async_fetch_year_stats(account, self._this_year)
         )
-        if success:
-            (
-                this_year_cost,
-                this_year_kwh,
-                this_year_by_month,
-            ) = result
-
-            _LOGGER.debug(
-                "Updated this year's data for account %s: %s",
-                account.account_number,
-                result,
-            )
-        else:
-            _LOGGER.error(
-                "Error updating this year's data for account %s: %s",
-                account.account_number,
-                result,
-            )
-            this_year_cost, this_year_kwh, this_year_by_month = (
-                STATE_UNAVAILABLE,
-                STATE_UNAVAILABLE,
-                STATE_UNAVAILABLE,
-            )
         self._gathered_data[account.account_number][
             SUFFIX_THIS_YEAR_KWH
         ] = this_year_kwh
@@ -575,32 +515,9 @@ class CSGCoordinator(DataUpdateCoordinator):
                 account.account_number,
             )
             return
-        success, result = await self._async_fetch(
-            self._client.get_year_month_stats, account, self._last_year
+        last_year_cost, last_year_kwh, last_year_by_month = (
+            await self._async_fetch_year_stats(account, self._last_year)
         )
-        if success:
-            (
-                last_year_cost,
-                last_year_kwh,
-                last_year_by_month,
-            ) = result
-
-            _LOGGER.debug(
-                "Updated last year's data for account %s: %s",
-                account.account_number,
-                result,
-            )
-        else:
-            _LOGGER.error(
-                "Error updating last year's data for account %s: %s",
-                account.account_number,
-                result,
-            )
-            last_year_cost, last_year_kwh, last_year_by_month = (
-                STATE_UNAVAILABLE,
-                STATE_UNAVAILABLE,
-                STATE_UNAVAILABLE,
-            )
         self._gathered_data[account.account_number][
             SUFFIX_LAST_YEAR_KWH
         ] = last_year_kwh
@@ -659,21 +576,12 @@ class CSGCoordinator(DataUpdateCoordinator):
         self, account: CSGElectricityAccount
     ):
         """Update this month's usage, cost and ladder"""
-        # fetch usage and cost in parallel
-        task_fetch_usage = asyncio.create_task(
-            self._async_fetch(
-                self._client.get_month_daily_usage_detail, account, self._this_month_ym
-            )
-        )
-        task_fetch_cost = asyncio.create_task(
-            self._async_fetch(
-                self._client.get_month_daily_cost_detail, account, self._this_month_ym
-            )
-        )
-
-        results = await asyncio.gather(task_fetch_usage, task_fetch_cost)
-
-        (success_usage, result_usage), (success_cost, result_cost) = results
+        (
+            success_usage,
+            result_usage,
+            success_cost,
+            result_cost,
+        ) = await self._async_fetch_month_details(account, self._this_month_ym)
 
         if success_usage and result_usage:
             this_month_kwh_from_usage, this_month_by_day_from_usage = result_usage
@@ -777,21 +685,12 @@ class CSGCoordinator(DataUpdateCoordinator):
             return
 
         # continue to update last month's data
-        # fetch usage and cost in parallel
-        task_fetch_usage = asyncio.create_task(
-            self._async_fetch(
-                self._client.get_month_daily_usage_detail, account, self._last_month_ym
-            )
-        )
-        task_fetch_cost = asyncio.create_task(
-            self._async_fetch(
-                self._client.get_month_daily_cost_detail, account, self._last_month_ym
-            )
-        )
-
-        results = await asyncio.gather(task_fetch_usage, task_fetch_cost)
-
-        (success_usage, result_usage), (success_cost, result_cost) = results
+        (
+            success_usage,
+            result_usage,
+            success_cost,
+            result_cost,
+        ) = await self._async_fetch_month_details(account, self._last_month_ym)
 
         if success_usage and result_usage:
             last_month_kwh_from_usage, last_month_by_day_from_usage = result_usage
@@ -962,17 +861,6 @@ class CSGCoordinator(DataUpdateCoordinator):
 
     async def _async_update_account_data(self, account: CSGElectricityAccount):
         start_time = time.time()
-        # TODO use asyncio.TaskGroup() in 3.11
-
-        # async with asyncio.TaskGroup() as task_group:
-        #     task_group.create_task(self._async_update_bal_arr(account))
-        #     task_group.create_task(self._async_update_yesterday_kwh(account))
-        #     task_group.create_task(self._async_update_this_year_stats(account))
-        #     task_group.create_task(self._async_update_last_year_stats(account))
-        #     task_group.create_task(
-        #         self._async_update_this_month_stats_and_ladder(account)
-        #     )
-        #     task_group.create_task(self._async_update_last_month_stats(account))
         results = await asyncio.gather(
             self._async_update_bal_arr(account),
             self._async_update_yesterday_kwh(account),
