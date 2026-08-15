@@ -61,23 +61,23 @@ IPv4；仅 IPv6 只解析、连接 IPv6 且不会回退；自动模式在 IPv6 �
 <img src="https://raw.githubusercontent.com/windyboy/china_southern_power_grid_stat/main/img/setup_select_account.png" alt="" style="width: 400px;">
 
 传感器列表
+
 - 余额
 - 欠费
+- 昨日用电量
+- 最近日用电量
+- 最近日电费
+- 本年度用电量
+- 本年度电费
+- 当月用电量
+- 当月电费
 - 当前阶梯档位
 - 当前阶梯剩余电量
 - 当前阶梯电价
-- 上月电费
-- 上月用电量
-- 当月用电量
-- 当月电费
-- 本年度电费
-- 本年度用电量
-- 上年度电费
 - 上年度用电量
-- 最近日用电量
-- 最近日电费
-- 昨日用电量
-
+- 上年度电费
+- 上月用电量
+- 上月电费
 
 
 

@@ -9,4 +9,4 @@
 - GitHub Actions 同时验证 Home Assistant 2023.11.3/Python 3.11 与当前版本/Python 3.14
 - 代码问题以 GitHub PR 和 Linear issue 的最新状态为准
 
-最近核实：2026-08-14。
+最近核实：2026-08-15。

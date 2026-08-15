@@ -1,3 +1,7 @@
 **/*.pyc
-session.json
 **/session.json
+.venv/
+.pytest_cache/
+.agents/
+.claude/
+skills-lock.json

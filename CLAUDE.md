@@ -1,68 +1,70 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+For agents working in this repository. User install steps, feature lists, screenshots, and encryption / packet-capture history live in `README.md`. Do not repeat them here.
 
-## Project Overview
+Home Assistant custom integration for China Southern Power Grid (Guangdong, Guangxi, Yunnan, Guizhou, Hainan) usage and billing.
 
-Home Assistant custom integration for China Southern Power Grid (南方电网) electricity usage statistics. Fetches electricity consumption data, billing information, and ladder pricing from the CSG API for regions: Guangdong, Guangxi, Yunnan, Guizhou, and Hainan.
+Fork of CubicPill. Current maintainer is `@windyboy`. Do not rewrite README / LICENSE credit. Do not erase the original author.
 
-## Development Commands
+## Where to edit
 
-**Validation:**
+| File | Role |
+|------|------|
+| `custom_components/china_southern_power_grid_stat/__init__.py` | Entry setup/unload, session check, device removal |
+| `custom_components/china_southern_power_grid_stat/config.py` | Read IP family and refresh interval; request an address-family-bound HA `ClientSession` |
+| `custom_components/china_southern_power_grid_stat/config_flow.py` | Network step, five login paths, options (add account / settings) |
+| `custom_components/china_southern_power_grid_stat/sensor.py` | `CSGCoordinator`, `_SENSOR_DEFINITIONS`, entities |
+| `custom_components/china_southern_power_grid_stat/const.py` | Suffixes, refresh-window thresholds, IP-family options and default |
+| `custom_components/china_southern_power_grid_stat/csg_client/__init__.py` | `CSGClient` (usable without Home Assistant) |
+| `custom_components/china_southern_power_grid_stat/csg_client/const.py` | `LoginType`, API constants |
+| `custom_components/china_southern_power_grid_stat/csg_client_demo.py` | Standalone client demo |
+| `custom_components/china_southern_power_grid_stat/strings.json` | Chinese UI source |
+| `custom_components/china_southern_power_grid_stat/translations/zh-Hans.json` | Same values as `strings.json` |
+| `custom_components/china_southern_power_grid_stat/translations/en.json` | English |
+| `tests/` | Behavior tests; do not change them to accommodate a refactor |
+
+Data flow: pick IP family → one of the five login paths → write token into the config entry → setup only verifies the session (expired login requires manual reauth; do not auto-relogin) → coordinator fetches on the refresh windows → `_SENSOR_DEFINITIONS` creates entities.
+
+## Do not break
+
+Write rules. Check the source files. Do not copy lists or numbers into this file.
+
+- Do not drop a login path. The list is `LoginType` in `csg_client/const.py`.
+- Do not rename suffixes, entity IDs, or device IDs, and do not change their formulas. Suffix constants live in the top-level `const.py`. The declaration table `_SENSOR_DEFINITIONS` lives in `sensor.py`.
+- Change refresh windows only by editing the thresholds in the top-level `const.py`. The default interval is in that file too.
+- Keep IP family a user option (`auto` / `ipv4` / `ipv6`). Do not hard-code a single family. Options and default live in the top-level `const.py`; session binding lives in `config.py`.
+- Do not silently change CSG API request shapes. Implementation is in `csg_client/`.
+- Do not change `tests/` to accommodate a refactor.
+- Do not delete these lookalikes:
+  - `csg_client_demo.py`: standalone client demo, not dead code.
+  - Translation trio: this repo intentionally uses `strings.json` as the Chinese source, `zh-Hans.json` with the same values, and `en.json` for English.
+  - QR help HTML placeholders: `strings.json` conflicts with HTML tags. See `description_placeholders` in `config_flow.py`.
+
+When you change one place, change the coupled places too:
+
+| You change | Also touch |
+|------------|------------|
+| New suffix | Top-level `const.py` + `_SENSOR_DEFINITIONS` in `sensor.py` (and the translation trio if copy is needed) |
+| New login path | `LoginType` in `csg_client/const.py` + `config_flow.py` + the translation trio |
+| Refresh window | Thresholds in the top-level `const.py` |
+
+## How to test
+
+Locally:
+
 ```bash
-# Run Home Assistant hassfest validation (checks manifest.json, translations, etc.)
-docker run --rm -v $(pwd):/github/workspace ghcr.io/home-assistant/hassfest
-
-# Run HACS validation
-docker run --rm -v $(pwd):/github/workspace ghcr.io/hacs/action
+python -m pytest -q
 ```
 
-**Testing the CSG client standalone:**
-```bash
-cd custom_components/china_southern_power_grid_stat
-python csg_client_demo.py
-```
+The three test files are `tests/test_sensor_behavior.py`, `tests/test_config_options.py`, and `tests/test_csg_client_http.py`.
 
-## Architecture
+CI jobs: Tests, hassfest, HACS. Treat `.github/workflows/` as the source of truth for matrix and versions. Minimum Home Assistant version is in `README.md`.
 
-### Core Components
+Do not treat docker hassfest/HACS as the local default. Do not treat `csg_client_demo.py` as the default test.
 
-**`csg_client/`** - Standalone API client library for CSG's mobile app API
-- `__init__.py`: `CSGClient` class implementing all API calls with AES/RSA encryption
-- `const.py`: API constants, encryption keys, endpoint paths, response codes
-- Can be used independently of Home Assistant (see `csg_client_demo.py`)
+## Traps
 
-**Integration Files:**
-- `__init__.py`: Entry setup/teardown, session validation, device removal
-- `config_flow.py`: Multi-step login flows (SMS, SMS+password, QR code via WeChat/Alipay/CSG app)
-- `sensor.py`: `CSGCoordinator` for data fetching + sensor entities (energy, cost, ladder)
-- `const.py`: Integration constants, sensor suffixes, update thresholds
+- `create_or_update_config_entry` still accepts an unused `password`. `tests/test_config_options.py` calls the four-argument form. Do not drop the argument to "clean unused parameters".
+- The options menu labels `添加已绑定的缴费号` / `参数设置` and the interval check `刷新间隔不能低于60秒` are hardcoded in `config_flow.py`. They are not in the translation JSON. Do not pretend they live in `strings.json` when you edit that copy.
 
-### Data Flow
-
-1. **Login**: `CSGConfigFlow` handles authentication via `CSGClient` API methods
-2. **Coordinator**: `CSGCoordinator` (in `sensor.py`) polls API at configurable intervals (default 4h)
-3. **Sensors**: 16 sensor types per electricity account (balance, arrears, usage by day/month/year, ladder info)
-
-### Key Design Patterns
-
-- **Asynchronous API client**: `CSGClient` uses an injected `aiohttp.ClientSession`; Home Assistant supplies a shared session whose address family is configurable (auto / IPv4 / IPv6), default auto
-- **Session persistence**: Auth token stored in config entry data, validated on each setup
-- **Conditional updates**: Last month/year data only updates during first few days of new periods to reduce API calls
-- **Parallel fetching**: Multiple API calls run concurrently via `asyncio.gather()` in coordinator
-
-### Login Types (LoginType enum)
-- `LOGIN_TYPE_SMS`: Phone + SMS code only
-- `LOGIN_TYPE_PWD_AND_SMS`: Phone + password + SMS code
-- `LOGIN_TYPE_CSG_QR`, `LOGIN_TYPE_WX_QR`, `LOGIN_TYPE_ALI_QR`: QR code login
-
-### API Encryption
-- Request body: AES-CBC encrypted with hardcoded key/IV
-- Password field: RSA public key encrypted
-- Response: AES-CBC decrypted with same key/IV
-
-## File Locations
-
-- Integration code: `custom_components/china_southern_power_grid_stat/`
-- Translations: `strings.json` (Chinese UI strings)
-- Manifest: `manifest.json` (version, requirements: pycryptodome, brotli)
+When you change a module, test, or rule this file points at, update only the matching section.
