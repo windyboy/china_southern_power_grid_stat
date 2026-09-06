@@ -44,6 +44,10 @@ from .const import (
     SETTING_LAST_YEAR_UPDATE_DAY_THRESHOLD,
     SETTING_UPDATE_TIMEOUT,
     STATE_UPDATE_UNCHANGED,
+    SZ_AREA_CODE,
+    SZ_TIER_BOUNDARIES_SUMMER,
+    SZ_TIER_BOUNDARIES_WINTER,
+    SZ_TIER_TARIFFS,
     SUFFIX_ARR,
     SUFFIX_BAL,
     SUFFIX_CURRENT_LADDER,
@@ -416,7 +420,8 @@ class CSGCoordinator(DataUpdateCoordinator):
         )
         if success:
             return result
-        return STATE_UNAVAILABLE, STATE_UNAVAILABLE, STATE_UNAVAILABLE
+        # CSG server-side hiccup: keep last known values instead of going unavailable
+        return STATE_UPDATE_UNCHANGED, STATE_UPDATE_UNCHANGED, STATE_UPDATE_UNCHANGED
 
     async def _async_fetch_month_details(
         self, account: CSGElectricityAccount, year_month: tuple[int, int]
@@ -450,7 +455,7 @@ class CSGCoordinator(DataUpdateCoordinator):
                 result,
             )
         else:
-            balance, arrears = STATE_UNAVAILABLE, STATE_UNAVAILABLE
+            balance, arrears = STATE_UPDATE_UNCHANGED, STATE_UPDATE_UNCHANGED
             _LOGGER.error(
                 "Error updating balance and arrears for account %s: %s",
                 account.account_number,
@@ -461,6 +466,40 @@ class CSGCoordinator(DataUpdateCoordinator):
 
     async def _async_update_yesterday_kwh(self, account: CSGElectricityAccount):
         """Update yesterday's kwh"""
+        if account.area_code == SZ_AREA_CODE:
+            # Shenzhen: legacy yesterday endpoint returns empty; use the last
+            # day of the electricity calendar.
+            success, result = await self._async_fetch(
+                self._client.get_month_daily_usage_detail_sz,
+                account,
+                self._this_month_ym,
+            )
+            if success and result:
+                _, by_day = result
+                if by_day:
+                    yesterday_kwh = by_day[-1][WF_ATTR_KWH]
+                    _LOGGER.debug(
+                        "Updated yesterday's kwh for account %s: %s",
+                        account.account_number,
+                        yesterday_kwh,
+                    )
+                else:
+                    yesterday_kwh = STATE_UNAVAILABLE
+                    _LOGGER.error(
+                        "No daily data for yesterday's kwh for account %s",
+                        account.account_number,
+                    )
+            else:
+                yesterday_kwh = STATE_UNAVAILABLE
+                _LOGGER.error(
+                    "Error updating yesterday's kwh for account %s: %s",
+                    account.account_number,
+                    result,
+                )
+            self._gathered_data[account.account_number][
+                SUFFIX_YESTERDAY_KWH
+            ] = yesterday_kwh
+            return
         success, result = await self._async_fetch(
             self._client.get_yesterday_kwh,
             account,
@@ -473,7 +512,7 @@ class CSGCoordinator(DataUpdateCoordinator):
                 result,
             )
         else:
-            yesterday_kwh = STATE_UNAVAILABLE
+            yesterday_kwh = STATE_UPDATE_UNCHANGED
             _LOGGER.error(
                 "Error updating yesterday's kwh for account %s: %s",
                 account.account_number,
@@ -572,10 +611,100 @@ class CSGCoordinator(DataUpdateCoordinator):
             kwh = max(kwh_from_cost, kwh_from_usage)
         return by_day, kwh
 
+    @staticmethod
+    def _calc_ladder_from_kwh(kwh: float, year: int, month: int):
+        """Estimate Shenzhen ladder stage from month usage.
+
+        CSG no longer returns live ladder data for Shenzhen accounts (the
+        legacy queryDayElectricChargeByMPoint endpoint returns empty since the
+        2026-09 migration). The app does not display tiers either. We estimate
+        from the month usage using the published monthly tier boundaries:
+        summer (May-Oct) 350/700 kWh, non-summer 200/400 kWh. Tariffs are the
+        exact values from the monthly bill PDF.
+        """
+        if 5 <= month <= 10:
+            stage1, stage2 = SZ_TIER_BOUNDARIES_SUMMER
+        else:
+            stage1, stage2 = SZ_TIER_BOUNDARIES_WINTER
+        if kwh <= stage1:
+            stage, remaining, tariff = 1, stage1 - kwh, SZ_TIER_TARIFFS[0]
+        elif kwh <= stage2:
+            stage, remaining, tariff = 2, stage2 - kwh, SZ_TIER_TARIFFS[1]
+        else:
+            stage, remaining, tariff = 3, 0.0, SZ_TIER_TARIFFS[2]
+        return stage, remaining, tariff
+
     async def _async_update_this_month_stats_and_ladder(
         self, account: CSGElectricityAccount
     ):
         """Update this month's usage, cost and ladder"""
+        if account.area_code == SZ_AREA_CODE:
+            # Shenzhen: legacy daily endpoints return "没有返回数据:null" since
+            # the 2026-09 CSG migration. Use the electricity calendar endpoint
+            # (what the app uses) plus the monthly bill list.
+            success_usage, result_usage = await self._async_fetch(
+                self._client.get_month_daily_usage_detail_sz,
+                account,
+                self._this_month_ym,
+            )
+            if success_usage and result_usage:
+                this_month_kwh, this_month_by_day = result_usage
+            else:
+                this_month_kwh, this_month_by_day = (
+                    STATE_UNAVAILABLE,
+                    STATE_UNAVAILABLE,
+                )
+
+            success_cost, result_cost = await self._async_fetch(
+                self._client.get_month_bill_list, account, self._this_month_ym
+            )
+            if success_cost and isinstance(result_cost, dict):
+                # current-month bill only exists after month close
+                this_month_cost = float(result_cost.get("totalElectricity") or 0)
+            else:
+                this_month_cost = STATE_UNAVAILABLE
+
+            if isinstance(this_month_kwh, (int, float)):
+                (
+                    ladder_stage,
+                    ladder_remaining_kwh,
+                    ladder_tariff,
+                ) = self._calc_ladder_from_kwh(
+                    this_month_kwh, self._this_month_ym[0], self._this_month_ym[1]
+                )
+                ladder_start_date = None
+            else:
+                ladder_stage = STATE_UNAVAILABLE
+                ladder_remaining_kwh = STATE_UNAVAILABLE
+                ladder_tariff = STATE_UNAVAILABLE
+                ladder_start_date = STATE_UNAVAILABLE
+
+            self._gathered_data[account.account_number][
+                SUFFIX_THIS_MONTH_KWH
+            ] = this_month_kwh
+            self._gathered_data[account.account_number][
+                SUFFIX_THIS_MONTH_COST
+            ] = this_month_cost
+            self._gathered_data[account.account_number][ATTR_KEY_THIS_MONTH_BY_DAY] = {
+                ATTR_KEY_THIS_MONTH_BY_DAY: this_month_by_day
+            }
+            self._gathered_data[account.account_number][
+                SUFFIX_CURRENT_LADDER
+            ] = ladder_stage
+            self._gathered_data[account.account_number][
+                SUFFIX_CURRENT_LADDER_REMAINING_KWH
+            ] = ladder_remaining_kwh
+            self._gathered_data[account.account_number][
+                SUFFIX_CURRENT_LADDER_TARIFF
+            ] = ladder_tariff
+            self._gathered_data[account.account_number][
+                ATTR_KEY_CURRENT_LADDER_START_DATE
+            ] = {ATTR_KEY_CURRENT_LADDER_START_DATE: ladder_start_date}
+            if this_month_by_day == STATE_UNAVAILABLE:
+                # latest_day needs by-day data; fall back to last month
+                self._if_update_last_month = True
+            return
+
         (
             success_usage,
             result_usage,
@@ -633,6 +762,42 @@ class CSGCoordinator(DataUpdateCoordinator):
                 STATE_UNAVAILABLE,
                 STATE_UNAVAILABLE,
             )
+        if (not success_usage or not result_usage) and (
+            not success_cost or not result_cost
+        ):
+            # Both daily usage and daily cost queries failed (CSG server-side
+            # hiccup, e.g. "没有返回数据:null"). Keep last known values instead
+            # of marking the entities unavailable; they will refresh on the
+            # next successful poll.
+            _LOGGER.warning(
+                "Both daily usage and cost queries failed for account %s; keeping last known values",
+                account.account_number,
+            )
+            self._gathered_data[account.account_number][
+                SUFFIX_THIS_MONTH_KWH
+            ] = STATE_UPDATE_UNCHANGED
+            self._gathered_data[account.account_number][
+                SUFFIX_THIS_MONTH_COST
+            ] = STATE_UPDATE_UNCHANGED
+            self._gathered_data[account.account_number][ATTR_KEY_THIS_MONTH_BY_DAY] = {
+                ATTR_KEY_THIS_MONTH_BY_DAY: STATE_UPDATE_UNCHANGED
+            }
+            self._gathered_data[account.account_number][
+                SUFFIX_CURRENT_LADDER
+            ] = STATE_UPDATE_UNCHANGED
+            self._gathered_data[account.account_number][
+                SUFFIX_CURRENT_LADDER_REMAINING_KWH
+            ] = STATE_UPDATE_UNCHANGED
+            self._gathered_data[account.account_number][
+                SUFFIX_CURRENT_LADDER_TARIFF
+            ] = STATE_UPDATE_UNCHANGED
+            self._gathered_data[account.account_number][
+                ATTR_KEY_CURRENT_LADDER_START_DATE
+            ] = {ATTR_KEY_CURRENT_LADDER_START_DATE: STATE_UPDATE_UNCHANGED}
+            # latest_day needs by-day data; fall back to last month
+            self._if_update_last_month = True
+            return
+
         this_month_by_day, this_month_kwh = self.merge_by_day_data(
             by_day_from_usage=this_month_by_day_from_usage,
             kwh_from_usage=this_month_kwh_from_usage,
@@ -684,6 +849,38 @@ class CSGCoordinator(DataUpdateCoordinator):
             ] = {ATTR_KEY_LAST_MONTH_BY_DAY: STATE_UPDATE_UNCHANGED}
             return
 
+        if account.area_code == SZ_AREA_CODE:
+            # Shenzhen: use the monthly bill list (exact totals) plus the
+            # electricity calendar for per-day data.
+            success_bill, result_bill = await self._async_fetch(
+                self._client.get_month_bill_list, account, self._last_month_ym
+            )
+            success_cal, result_cal = await self._async_fetch(
+                self._client.get_month_daily_usage_detail_sz,
+                account,
+                self._last_month_ym,
+            )
+            if success_bill and isinstance(result_bill, dict):
+                last_month_kwh = float(result_bill.get("totalPower") or 0)
+                last_month_cost = float(result_bill.get("totalElectricity") or 0)
+            else:
+                last_month_kwh = STATE_UNAVAILABLE
+                last_month_cost = STATE_UNAVAILABLE
+            if success_cal and result_cal:
+                _, last_month_by_day = result_cal
+            else:
+                last_month_by_day = STATE_UNAVAILABLE
+            self._gathered_data[account.account_number][
+                SUFFIX_LAST_MONTH_KWH
+            ] = last_month_kwh
+            self._gathered_data[account.account_number][
+                SUFFIX_LAST_MONTH_COST
+            ] = last_month_cost
+            self._gathered_data[account.account_number][ATTR_KEY_LAST_MONTH_BY_DAY] = {
+                ATTR_KEY_LAST_MONTH_BY_DAY: last_month_by_day
+            }
+            return
+
         # continue to update last month's data
         (
             success_usage,
@@ -727,6 +924,26 @@ class CSGCoordinator(DataUpdateCoordinator):
                 STATE_UNAVAILABLE,
                 STATE_UNAVAILABLE,
             )
+        if (not success_usage or not result_usage) and (
+            not success_cost or not result_cost
+        ):
+            # Both last-month queries failed (CSG server-side hiccup):
+            # keep last known values instead of going unavailable.
+            _LOGGER.warning(
+                "Both last-month daily usage and cost queries failed for account %s; keeping last known values",
+                account.account_number,
+            )
+            self._gathered_data[account.account_number][
+                SUFFIX_LAST_MONTH_KWH
+            ] = STATE_UPDATE_UNCHANGED
+            self._gathered_data[account.account_number][
+                SUFFIX_LAST_MONTH_COST
+            ] = STATE_UPDATE_UNCHANGED
+            self._gathered_data[account.account_number][ATTR_KEY_LAST_MONTH_BY_DAY] = {
+                ATTR_KEY_LAST_MONTH_BY_DAY: STATE_UPDATE_UNCHANGED
+            }
+            return
+
         last_month_by_day, last_month_kwh = self.merge_by_day_data(
             by_day_from_usage=last_month_by_day_from_usage,
             kwh_from_usage=last_month_kwh_from_usage,
@@ -760,7 +977,11 @@ class CSGCoordinator(DataUpdateCoordinator):
             latest_day_cost = STATE_UNAVAILABLE
             latest_day_date = STATE_UNAVAILABLE
         else:
-            if this_month_by_day != STATE_UNAVAILABLE and len(this_month_by_day) >= 1:
+            if (
+                this_month_by_day
+                not in (STATE_UNAVAILABLE, STATE_UPDATE_UNCHANGED)
+                and len(this_month_by_day) >= 1
+            ):
                 # we have this month's data, use the latest day
                 latest_day_kwh = this_month_by_day[-1][WF_ATTR_KWH]
                 latest_day_cost = (

@@ -93,6 +93,19 @@ SETTING_LAST_MONTH_UPDATE_DAY_THRESHOLD = 3
 SETTING_LAST_YEAR_UPDATE_DAY_THRESHOLD = 7
 
 
+# Shenzhen (area code 090000) uses the electricity-calendar endpoints since
+# the CSG server-side migration (2026-09); the legacy queryDayElectricByMPoint
+# family returns "没有返回数据:null" for SZ accounts.
+SZ_AREA_CODE = "090000"
+
+# Shenzhen monthly tier boundaries (kWh) and tariffs (CNY/kWh).
+# Summer (May-Oct): 350/700; non-summer (Nov-Apr): 200/400.
+# Tariffs are the exact values from the monthly bill PDF (2026-08).
+SZ_TIER_BOUNDARIES_SUMMER = (350.0, 700.0)
+SZ_TIER_BOUNDARIES_WINTER = (200.0, 400.0)
+SZ_TIER_TARIFFS = (0.66286875, 0.71286875, 0.963)
+
+
 # defaults (unit: seconds)
 DEFAULT_UPDATE_INTERVAL = int(timedelta(hours=4).total_seconds())
 
