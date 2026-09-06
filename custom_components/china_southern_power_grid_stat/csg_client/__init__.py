@@ -662,6 +662,33 @@ class CSGClient:
             return resp_data[JSON_KEY_DATA]
         self._handle_unsuccessful_response(path, resp_data)
 
+    async def api_query_electricity_calendar(
+        self,
+        year: int,
+        month: int,
+        area_code: str,
+        ele_customer_id: str,
+        metering_point_id: str,
+        metering_point_number: str,
+    ) -> dict:
+        """Shenzhen electricity calendar: daily usage + temperatures.
+
+        The app's Shenzhen "electricity calendar" endpoint. Returns
+        totalPower (month total) and result (per-day power/temperature).
+        """
+        path = "charge/queryElectricityCalendar"
+        payload = {
+            JSON_KEY_ELE_CUST_ID: ele_customer_id,
+            JSON_KEY_AREA_CODE: area_code,
+            JSON_KEY_YEAR_MONTH: f"{year}{month:02d}",
+            JSON_KEY_METERING_POINT_ID: metering_point_id,
+            "deviceIdentif": metering_point_number,
+        }
+        _, resp_data = await self._request_with_retry(path, payload)
+        if resp_data[JSON_KEY_STA] == RESP_STA_SUCCESS:
+            return resp_data[JSON_KEY_DATA]
+        self._handle_unsuccessful_response(path, resp_data)
+
     async def api_logout(self, logon_chan: str, cred_type: LoginType) -> None:
         """logout"""
         path = "center/logout"
@@ -966,6 +993,73 @@ class CSGClient:
         )
         if isinstance(resp_data, dict) and resp_data.get("power") is not None:
             return float(resp_data["power"])
+        return None
+
+    async def get_month_daily_usage_detail_sz(
+        self, account: CSGElectricityAccount, year_month: tuple[int, int]
+    ) -> tuple[float, list[dict[str, str | float]]]:
+        """Get daily usage of current month via the Shenzhen electricity
+        calendar endpoint (queryElectricityCalendar).
+
+        The legacy queryDayElectricByMPoint endpoint no longer returns data
+        for Shenzhen (area code 090000) accounts since the CSG server-side
+        migration; the app uses this calendar endpoint instead.
+        """
+        year, month = year_month
+        resp_data = await self.api_query_electricity_calendar(
+            year,
+            month,
+            account.area_code,
+            account.ele_customer_id,
+            account.metering_point_id,
+            account.metering_point_number,
+        )
+        if not isinstance(resp_data, dict):
+            return 0.0, []
+        total_power = resp_data.get("totalPower")
+        month_total_kwh = float(total_power) if total_power is not None else 0.0
+        by_day = []
+        result = resp_data.get("result")
+        for d_data in result if isinstance(result, list) else []:
+            if not isinstance(d_data, dict):
+                continue
+            if d_data.get("date") is None or d_data.get("power") is None:
+                continue
+            by_day.append(
+                {WF_ATTR_DATE: d_data["date"], WF_ATTR_KWH: float(d_data["power"])}
+            )
+        return month_total_kwh, by_day
+
+    async def get_month_bill_list(
+        self, account: CSGElectricityAccount, year_month: tuple[int, int]
+    ) -> dict | None:
+        """Get the monthly electricity bill overview (selectElecBillList).
+
+        Returns the first bill overview dict for the given year-month, or
+        None when no bill has been generated yet (current month is billed
+        after month close).
+        """
+        year, month = year_month
+        payload = {
+            "areaCode": "",
+            "yearMonth": f"{year}{month:02d}",
+            "eleCustIdList": [{"eleCustId": account.ele_customer_id}],
+        }
+        _, resp_data = await self._request_with_retry(
+            "charge/selectElecBillList",
+            {JSON_KEY_PARAM: encrypt_params(payload)},
+            custom_headers={"need-crypto": "true"},
+        )
+        if resp_data[JSON_KEY_STA] != RESP_STA_SUCCESS:
+            self._handle_unsuccessful_response("charge/selectElecBillList", resp_data)
+        data = resp_data.get(JSON_KEY_DATA)
+        if isinstance(data, str):
+            data = decrypt_params(data)
+        if not isinstance(data, dict):
+            return None
+        bills = data.get("billOverviewModelList")
+        if isinstance(bills, list) and bills:
+            return bills[0]
         return None
 
     # end high-level api wrappers
